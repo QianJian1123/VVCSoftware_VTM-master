@@ -180,32 +180,33 @@ int SampleAdaptiveOffset::getMergeList(CodingStructure& cs, int ctuRsAddr, SAOBl
   int mergedCTUPos;
   int numValidMergeCandidates = 0;
 
-  for(int mergeType=0; mergeType< NUM_SAO_MERGE_TYPES; mergeType++)
+  for(int mergeType=0; mergeType< NUM_SAO_MERGE_TYPES; mergeType++)//遍历上块参数融合和左块参数融合
   {
     SAOBlkParam* mergeCandidate = NULL;
 
     switch(mergeType)
     {
-    case SAO_MERGE_ABOVE:
+    case SAO_MERGE_ABOVE://上块
       {
         if(ctuY > 0)
         {
-          mergedCTUPos = ctuRsAddr- pcv.widthInCtus;
+          mergedCTUPos = ctuRsAddr- pcv.widthInCtus;//上块的位置;
           if(cs.getCURestricted(Position(ctuX*pcv.maxCUWidth, (ctuY-1)*pcv.maxCUHeight), cu, cu.chType))
           {
-            mergeCandidate = &(blkParams[mergedCTUPos]);
+            mergeCandidate = &(blkParams[mergedCTUPos]);//获取上块CTU的参数
+
           }
         }
       }
       break;
-    case SAO_MERGE_LEFT:
+    case SAO_MERGE_LEFT://左块
       {
         if(ctuX > 0)
         {
-          mergedCTUPos = ctuRsAddr- 1;
+          mergedCTUPos = ctuRsAddr- 1;//左块的位置
           if(cs.getCURestricted(Position((ctuX-1)*pcv.maxCUWidth, ctuY*pcv.maxCUHeight), cu, cu.chType))
           {
-            mergeCandidate = &(blkParams[mergedCTUPos]);
+            mergeCandidate = &(blkParams[mergedCTUPos]);//获取左块CTU的参数
           }
         }
       }
@@ -216,14 +217,14 @@ int SampleAdaptiveOffset::getMergeList(CodingStructure& cs, int ctuRsAddr, SAOBl
       }
     }
 
-    mergeList[mergeType]=mergeCandidate;
+    mergeList[mergeType]=mergeCandidate;//将mergeCandidate保存merge列表
     if (mergeCandidate != NULL)
     {
-      numValidMergeCandidates++;
+      numValidMergeCandidates++;//有效Merge候选数累加;
     }
   }
 
-  return numValidMergeCandidates;
+  return numValidMergeCandidates;//返回有效merge候选的数量;
 }
 
 
@@ -557,13 +558,14 @@ void SampleAdaptiveOffset::offsetCTU( const UnitArea& area, const CPelUnitBuf& s
       bAllOff=false;
     }
   }
-  if (bAllOff)
+  if (bAllOff)//如果三个分量都没有使用SAO,则返回
   {
     return;
   }
 
   bool isLeftAvail, isRightAvail, isAboveAvail, isBelowAvail, isAboveLeftAvail, isAboveRightAvail, isBelowLeftAvail, isBelowRightAvail;
 
+  // block boundary availability，获取块边界的可用性
   //block boundary availability
   deriveLoopFilterBoundaryAvailibility(cs, area.Y(), isLeftAvail,isRightAvail,isAboveAvail,isBelowAvail,isAboveLeftAvail,isAboveRightAvail,isBelowLeftAvail,isBelowRightAvail);
 
@@ -580,11 +582,11 @@ void SampleAdaptiveOffset::offsetCTU( const UnitArea& area, const CPelUnitBuf& s
   int horVirBndryPosComp[] = { -1,-1,-1 };
   int verVirBndryPosComp[] = { -1,-1,-1 };
   bool isCtuCrossedByVirtualBoundaries = isCrossedByVirtualBoundaries(area.Y().x, area.Y().y, area.Y().width, area.Y().height, numHorVirBndry, numVerVirBndry, horVirBndryPos, verVirBndryPos, cs.picHeader );
-  for(int compIdx = 0; compIdx < numberOfComponents; compIdx++)
+  for(int compIdx = 0; compIdx < numberOfComponents; compIdx++)//遍历三个分量
   {
     const ComponentID compID = ComponentID(compIdx);
     const CompArea& compArea = area.block(compID);
-    SAOOffset& ctbOffset     = saoblkParam[compIdx];
+    SAOOffset& ctbOffset     = saoblkParam[compIdx];//将SAO的相关参数赋值给ctboffset
 
     if(ctbOffset.modeIdc != SAO_MODE_OFF)
     {
@@ -600,7 +602,7 @@ void SampleAdaptiveOffset::offsetCTU( const UnitArea& area, const CPelUnitBuf& s
       {
         verVirBndryPosComp[i] = (verVirBndryPos[i] >> ::getComponentScaleX(compID, area.chromaFormat)) - compArea.x;
       }
-
+      //对块进行补偿，即在重建块的基础上加上补偿值
       offsetBlock( cs.sps->getBitDepth(toChannelType(compID)),
                    cs.slice->clpRng(compID),
                    ctbOffset.typeIdc, ctbOffset.offset

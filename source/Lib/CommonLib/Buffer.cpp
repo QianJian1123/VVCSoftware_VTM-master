@@ -426,13 +426,13 @@ void AreaBuf<Pel>::rspSignal(std::vector<Pel>& pLUT)
   {
     for (unsigned x = 0; x < width; x++)
     {
-      dst[x] = pLUT[src[x]];
+      dst[x] = pLUT[src[x]];//通过查表实现对每一个像素值的转换
     }
     dst += stride;
     src += stride;
   }
 }
-
+//实现对像素值的缩放。该函数控制正反。
 template<>
 void AreaBuf<Pel>::scaleSignal(const int scale, const bool dir, const ClpRng& clpRng)
 {

@@ -31,7 +31,12 @@
 * THE POSSIBILITY OF SUCH DAMAGE.
 */
 
-
+/*
+熵编码核心文件
+ 基类 BinEncIf BinCounter
+  派生1 BinEncoderBase
+  派生2 BitEstimatorBase
+*/
 #pragma once
 
 #include "CommonLib/Contexts.h"
@@ -120,7 +125,7 @@ public:
                                         unsigned goRicePar,
                                         unsigned cutoff,
                                         int      maxLog2TrDynamicRange    ) = 0;
-  virtual void      encodeBinTrm      ( unsigned bin                      ) = 0;
+  virtual void      encodeBinTrm      ( unsigned bin                      ) = 0; //编码终止位
   virtual void      align             ()                                    = 0;
 public:
   virtual uint32_t  getNumBins        ()                                    = 0;

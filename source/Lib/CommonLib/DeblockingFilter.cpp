@@ -134,7 +134,7 @@ void DeblockingFilter::destroy()
 
 /**
  - call deblocking function for every CU
- .
+ 对每一个CU进行去方块
  \param  pcPic   picture class (Pic) pointer
  */
 void DeblockingFilter::deblockingFilterPic( CodingStructure& cs
@@ -174,12 +174,14 @@ void DeblockingFilter::deblockingFilterPic( CodingStructure& cs
       cs.slice = firstCU->slice;
 
       // CU-based deblocking
+
+      // CU-based deblocking 基于CU的去块滤波，垂直边界滤波
       for( auto &currCU : cs.traverseCUs( CS::getArea( cs, ctuArea, CH_L ), CH_L ) )
       {
         xDeblockCU( currCU, EDGE_VER );
       }
 
-      if( CS::isDualITree( cs ) )
+      if( CS::isDualITree( cs ) )//对于双树，亮度色度单独划分，所以针对色度需要单独滤波
       {
         memset( m_aapucBS       [EDGE_VER].data(), 0,     m_aapucBS       [EDGE_VER].byte_size() );
         memset( m_aapbEdgeFilter[EDGE_VER].data(), false, m_aapbEdgeFilter[EDGE_VER].byte_size() );
@@ -196,6 +198,7 @@ void DeblockingFilter::deblockingFilterPic( CodingStructure& cs
   }
 
   // Vertical filtering
+  // CU-based deblocking 基于CU的去块滤波，水平边界滤波
   for( int y = 0; y < pcv.heightInCtus; y++ )
   {
     for( int x = 0; x < pcv.widthInCtus; x++ )
@@ -263,6 +266,18 @@ void DeblockingFilter::resetFilterLengths()
  \param cu               the CU to be deblocked
  \param edgeDir          the direction of the edge in block boundary (horizontal/vertical), which is added newly
 */
+/*
+xDeblockCU函数是以CU为单元进行去块滤波的，其第一个参数是需要进行滤波的CU，第二个参数是滤波方向（垂直或水平）。该函数的过程如下：
+
+调用xSetLoopfilterParam函数设置边界是否可用去块滤波（内部子块边界internalEdge，左侧边界leftEdge和上侧边界topEdge）
+遍历该CU中的全部子TU，设置子TU的垂直和水平边界（xSetEdgefilterMultiple函数，是否使用滤波），并根据滤波TU的边界长度确定需要进行滤波的像素数（xSetMaxFilterLengthPQFromTransformSizes函数）
+并将相应的边界加入边界的数组中（CU边界也在该步骤中设置）
+遍历该CU中的全部子PU，进行和第二步类似的过程。
+遍历所有的4x4单元，以4x4区域为基本单元设置边界强度（xGetBoundaryStrengthSingle函数）
+对所有需要进行滤波的边界进行排序，然后遍历所有需要进行滤波的边界，对每一个需要滤波的边界调用xEdgeFilterLuma和xEdgeFilterChroma进行滤波。
+注意：在VVC中，是不再区分CU、PU、TU的，上述的子TU边界滤波是由SBT和ISP模式引入的，子PU边界是由SbTMVP和仿射模式引入的。
+
+*/
 void DeblockingFilter::xDeblockCU( CodingUnit& cu, const DeblockEdgeDir edgeDir )
 {
   const PreCalcValues& pcv = *cu.cs->pcv;
@@ -275,7 +290,7 @@ void DeblockingFilter::xDeblockCU( CodingUnit& cu, const DeblockEdgeDir edgeDir 
 
   bool isCuCrossedByVirtualBoundaries = isCrossedByVirtualBoundaries( area.x, area.y, area.width, area.height, numHorVirBndry, numVerVirBndry, horVirBndryPos, verVirBndryPos, cu.cs->picHeader );
 
-  xSetDeblockingFilterParam( cu );
+  xSetDeblockingFilterParam( cu );//设置滤波边界是否可用（左、上、中间）
   static_vector<int, 2*MAX_CU_SIZE> edgeIdx;
   edgeIdx.clear();
 
@@ -283,7 +298,7 @@ void DeblockingFilter::xDeblockCU( CodingUnit& cu, const DeblockEdgeDir edgeDir 
   {
     m_shiftHor = ::getComponentScaleX(COMPONENT_Cb, cu.chromaFormat);
     m_shiftVer = ::getComponentScaleY(COMPONENT_Cb, cu.chromaFormat);
-    int x, y;
+    int x, y;//CU的x，y坐标
     if (cu.Y().valid())
     {
       x = cu.block(COMPONENT_Y).x;
@@ -298,10 +313,10 @@ void DeblockingFilter::xDeblockCU( CodingUnit& cu, const DeblockEdgeDir edgeDir 
     m_ctuYLumaSamples = y & ~(cu.slice->getSPS()->getMaxCUHeight() - 1);
   }
 
-  for( auto &currTU : CU::traverseTUs( cu ) )
+  for( auto &currTU : CU::traverseTUs( cu ) )//遍历所有的TU
   {
     const Area& areaTu = cu.Y().valid() ? currTU.block( COMPONENT_Y ) : Area( recalcPosition( cu.chromaFormat, cu.chType, CHANNEL_TYPE_LUMA, currTU.blocks[cu.chType].pos() ), recalcSize( cu.chromaFormat, cu.chType, CHANNEL_TYPE_LUMA, currTU.blocks[cu.chType].size() ) );
-
+    // 垂直和水平边界滤波设置为CU的中间边界
     verEdgeFilter = m_stLFCUParam.internalEdge;
     horEdgeFilter = m_stLFCUParam.internalEdge;
 
@@ -316,17 +331,17 @@ void DeblockingFilter::xDeblockCU( CodingUnit& cu, const DeblockEdgeDir edgeDir 
           xSetMaxFilterLengthPQFromTransformSizes(edgeDir, cu, currTU, COMPONENT_Cb);
         }
       }
-      continue;
+      continue; // 跳过不是4的整数倍的边界
     }
 
-    if( isCuCrossedByVirtualBoundaries )
+    if( isCuCrossedByVirtualBoundaries )//虚拟边界
     {
       xDeriveEdgefilterParam( areaTu.x, areaTu.y, numVerVirBndry, numHorVirBndry, verVirBndryPos, horVirBndryPos, verEdgeFilter, horEdgeFilter );
     }
-    xSetEdgefilterMultiple( cu, EDGE_VER, areaTu, verEdgeFilter );
-    xSetEdgefilterMultiple( cu, EDGE_HOR, areaTu, horEdgeFilter );
-    xSetMaxFilterLengthPQFromTransformSizes(edgeDir, cu, currTU, COMPONENT_Y);
-    if( cu.Y().valid() )
+    xSetEdgefilterMultiple( cu, EDGE_VER, areaTu, verEdgeFilter );//设置TU的垂直边界
+    xSetEdgefilterMultiple( cu, EDGE_HOR, areaTu, horEdgeFilter );//设置TU的水平边界
+    xSetMaxFilterLengthPQFromTransformSizes(edgeDir, cu, currTU, COMPONENT_Y);//设置根据TU边界长度确定参与滤波的像素数
+    if (cu.Y().valid())                                     //向边界索引中添加该边界的信息
     {
       edgeIdx.push_back( ( edgeDir == EDGE_HOR ) ? ( currTU.blocks[cu.chType].y - cu.blocks[cu.chType].y ) / 4 : ( currTU.blocks[cu.chType].x - cu.blocks[cu.chType].x ) / 4 );
     }
@@ -338,9 +353,9 @@ void DeblockingFilter::xDeblockCU( CodingUnit& cu, const DeblockEdgeDir edgeDir 
 
   bool mvSubBlocks = false;
   int subBlockSize = 8;
-  for( auto &currPU : CU::traversePUs( cu ) )
+  for( auto &currPU : CU::traversePUs( cu ) )//遍历PU
   {
-    const Area& areaPu = cu.Y().valid() ? currPU.block( COMPONENT_Y ) : area;
+    const Area& areaPu = cu.Y().valid() ? currPU.block( COMPONENT_Y ) : area;//当前PU的左上角坐标和CU的左上角的坐标是否一致
     const bool xOff    = currPU.blocks[cu.chType].x != cu.blocks[cu.chType].x;
     const bool yOff    = currPU.blocks[cu.chType].y != cu.blocks[cu.chType].y;
 
@@ -355,7 +370,7 @@ void DeblockingFilter::xDeblockCU( CodingUnit& cu, const DeblockEdgeDir edgeDir 
     xSetEdgefilterMultiple( cu, EDGE_HOR, areaPu, horEdgeFilter, yOff );
     edgeIdx.push_back( ( edgeDir == EDGE_HOR ) ? ( currPU.blocks[cu.chType].y - cu.blocks[cu.chType].y ) / 4 : ( currPU.blocks[cu.chType].x - cu.blocks[cu.chType].x ) / 4 );
 
-    if ((currPU.mergeFlag && (currPU.mergeType == MRG_TYPE_SUBPU_ATMVP)) || cu.affine)
+    if ((currPU.mergeFlag && (currPU.mergeType == MRG_TYPE_SUBPU_ATMVP)) || cu.affine)//如果是SBTMVP或affine
     {
       mvSubBlocks = true;
       if (edgeDir == EDGE_HOR)
@@ -393,19 +408,19 @@ void DeblockingFilter::xDeblockCU( CodingUnit& cu, const DeblockEdgeDir edgeDir 
     xSetMaxFilterLengthPQForCodingSubBlocks( edgeDir, cu, currPU, mvSubBlocks, subBlockSize, areaPu );
   }
 
-  const unsigned uiPelsInPart = pcv.minCUWidth;
-
+  const unsigned uiPelsInPart = pcv.minCUWidth;// 4x4单元
+  /*******************遍历所有的以4x4为基本单元的边界，获得每个4x4单元的边界强度*********************/
   for( int y = 0; y < area.height; y += uiPelsInPart )
   {
     for( int x = 0; x < area.width; x += uiPelsInPart )
     {
       unsigned uiBSCheck = 1;
       const Position localPos  { area.x + x, area.y + y };
-      const unsigned rasterIdx = getRasterIdx( localPos, pcv );
-
+      const unsigned rasterIdx = getRasterIdx( localPos, pcv );//当前4x4单元的光栅扫描顺序索引
+      // 参数m_aapbEdgeFilter在xSetEdgefilterMultiple中设置
       if( m_aapbEdgeFilter[edgeDir][rasterIdx] && uiBSCheck )
       {
-        char bS = 0;
+        char bS = 0;   // 获取边界强度
         if(cu.treeType != TREE_C)
         {
           bS |= xGetBoundaryStrengthSingle( cu, edgeDir, localPos, CHANNEL_TYPE_LUMA );
@@ -419,14 +434,14 @@ void DeblockingFilter::xDeblockCU( CodingUnit& cu, const DeblockEdgeDir edgeDir 
     }
   }
 
-
+   /************************* 进行最终滤波 ***********************/
   std::sort( edgeIdx.begin(), edgeIdx.end() );
   int prevEdgeIdx = -1;
-  for ( const int& edge : edgeIdx )
+  for ( const int& edge : edgeIdx )//遍历所有的边界
   {
     if ( edge == prevEdgeIdx ) // skip duplicate edgeIdx marked by both transform and coding subblock processes
     {
-      continue;
+      continue;//跳过由变换和编码子块过程标记的重复edgeIdx
     }
     prevEdgeIdx = edge;
 
@@ -488,14 +503,30 @@ inline void DeblockingFilter::xDeriveEdgefilterParam( const int xPos, const int 
     }
   }
 }
+/*
+根据边界处相邻块的长度判断需要进行滤波的最大像素数，记边界两侧的块分别为P块和Q块
 
+对于垂直边界，需要判断P块和Q块的宽度（width）；对于水平边界，需要判断P块和Q块的高度（Height）
+
+对于亮度分量，分为以下三种情况：
+
+小块（小于等于4），最多滤波1个像素
+大块（大于等于32），最多滤波7个像素
+否则，最多滤波3个像素
+对于色度分量，分为以下两种情况：
+
+大块（大于等于8），最多滤波3个像素
+否则，最多滤波1个像素
+这里只是计算了每个边界在进行滤波时的最大像素数，其真正进行滤波的像素数还需要根据滤波强度决策来决定。
+
+*/
 void DeblockingFilter::xSetMaxFilterLengthPQFromTransformSizes(const DeblockEdgeDir edgeDir, const CodingUnit &cu,
                                                          const TransformUnit &currTU, const int firstComponent)
 {
-  const TransformUnit& tuQ = currTU;
+  const TransformUnit& tuQ = currTU;// 将Q设置为当前TU
 
-  if ( edgeDir == EDGE_HOR )
-  {
+  if ( edgeDir == EDGE_HOR )//水平边界
+  {// 遍历所有的颜色分量
     for (int cIdx = firstComponent; cIdx < ::getNumberValidComponents(tuQ.chromaFormat); cIdx++)   // per component
     {
       const ComponentID comp = ComponentID(cIdx);
@@ -506,32 +537,32 @@ void DeblockingFilter::xSetMaxFilterLengthPQFromTransformSizes(const DeblockEdge
       const int ctuYOff      = currTU.block(comp).y - ( m_ctuYLumaSamples >> shiftVer ); // y offset from top edge of CTU in respective channel sample units
       const int minCUWidth   = cu.cs->pcv->minCUWidth >> shiftHor;
       if ( currTU.block(comp).valid() && ( ( currTU.block(comp).y == cu.block(comp).y ) ? m_stLFCUParam.topEdge : m_stLFCUParam.internalEdge ) ) // Edge deblocking needs to be recomputed since ISP contains whole CU chroma transforms in last TU of the CU
-      {
-        for ( int x = 0; x < currTU.blocks[cIdx].width; x += minCUWidth )
+      {   //边缘去块需要重新计算，因为ISP在CU的最后一个TU中包含整个CU色度变换
+        for (int x = 0; x < currTU.blocks[cIdx].width; x += minCUWidth)   //以4x4为单位遍历边界
         {
           const Position  posQ     = Position( currTU.blocks[ch].x + x, currTU.blocks[ch].y );
           const Position  posP     = posQ.offset( 0, -1 );
-          const int sizeQSide      = tuQ.block(comp).height;
+          const int sizeQSide      = tuQ.block(comp).height;//Q像素长度
           const TransformUnit& tuP = *cu.cs->getTU( posP, ch );
-          const int sizePSide      = tuP.block(comp).height;
+          const int sizePSide      = tuP.block(comp).height;//P像素长度
           m_transformEdge[cIdx][ctuXOff+x][ctuYOff] = true;
 
           if ( comp == COMPONENT_Y )
           {
             bool smallBlock = (sizePSide <= 4) || (sizeQSide <= 4);
-            if (smallBlock)
+            if (smallBlock)//对于亮度的小块（小于等于4x4），仅滤波1个像素
             {
               m_maxFilterLengthQ[cIdx][ctuXOff + x][ctuYOff] = 1;
               m_maxFilterLengthP[cIdx][ctuXOff + x][ctuYOff] = 1;
             }
             else
-            {
+            {//对于大块（大于等于32），滤波7个像素，否则滤波3个像素
               m_maxFilterLengthQ[cIdx][ctuXOff + x][ctuYOff] = (sizeQSide >= 32) ? 7 : 3;
               m_maxFilterLengthP[cIdx][ctuXOff + x][ctuYOff] = (sizePSide >= 32) ? 7 : 3;
             }
           }
           else
-          {
+          {   //对于色度大块（大于等于8），滤波3个像素，否则滤波1个像素
             m_maxFilterLengthQ[cIdx][ctuXOff+x][ctuYOff] = ( sizeQSide >= 8 && sizePSide >= 8 ) ? 3 : 1;
             m_maxFilterLengthP[cIdx][ctuXOff+x][ctuYOff] = ( sizeQSide >= 8 && sizePSide >= 8 ) ? 3 : 1;
           }
@@ -539,7 +570,7 @@ void DeblockingFilter::xSetMaxFilterLengthPQFromTransformSizes(const DeblockEdge
       }
     }
   }
-  if ( edgeDir == EDGE_VER )
+  if ( edgeDir == EDGE_VER )//垂直边界,重复上述流程
   {
     for ( int cIdx = firstComponent; cIdx < ::getNumberValidComponents(tuQ.chromaFormat); cIdx++ ) // per component
     {
@@ -662,7 +693,7 @@ void DeblockingFilter::xSetMaxFilterLengthPQForCodingSubBlocks( const DeblockEdg
     }
   }
 }
-
+//遍历全部的边界（垂直或者水平），设置其是否使用滤波
 void DeblockingFilter::xSetEdgefilterMultiple( const CodingUnit&    cu,
                                          const DeblockEdgeDir edgeDir,
                                          const Area&          area,
@@ -671,16 +702,16 @@ void DeblockingFilter::xSetEdgefilterMultiple( const CodingUnit&    cu,
 {
   const PreCalcValues& pcv = *cu.cs->pcv;
 
-  const unsigned uiAdd     = ( edgeDir == EDGE_VER ) ? pcv.partsInCtuWidth : 1;
+  const unsigned uiAdd     = ( edgeDir == EDGE_VER ) ? pcv.partsInCtuWidth : 1;//垂直滤波往下走1个，水平滤波往右走1个
   const unsigned uiNumElem = ( edgeDir == EDGE_VER ) ? ( area.height / pcv.minCUHeight ) : ( area.width / pcv.minCUWidth );
-  unsigned uiBsIdx         = getRasterIdx( area, pcv );
+  unsigned uiBsIdx         = getRasterIdx( area, pcv );//第一个边界光栅扫描的索引值
 
-  for( int ui = 0; ui < uiNumElem; ui++ )
+  for( int ui = 0; ui < uiNumElem; ui++ )//遍历所有的边界（垂直或者水平）
   {
-    m_aapbEdgeFilter[edgeDir][uiBsIdx] = bValue;
+    m_aapbEdgeFilter[edgeDir][uiBsIdx] = bValue;//设置是否使用滤波器
     if ( m_aapucBS[edgeDir][uiBsIdx] && bValue )
     {
-      m_aapucBS[edgeDir][uiBsIdx] = 3;  // both the TU and PU edge
+      m_aapucBS[edgeDir][uiBsIdx] = 3;  // both the TU and PU edge   表示既是TU边界也是PU边界
     }
     else
     {
@@ -713,11 +744,12 @@ void DeblockingFilter::xSetDeblockingFilterParam( const CodingUnit& cu )
   m_stLFCUParam.topEdge = (0 < pos.y) && isAvailableAbove(cu, *cu.cs->getCU(pos.offset(0, -1), cu.chType), !pps.getLoopFilterAcrossSlicesEnabledFlag(), !pps.getLoopFilterAcrossTilesEnabledFlag(),
     !( pps.getSubPicFromCU(cu).getloopFilterAcrossEnabledFlag() && pps.getSubPicFromCU(*cu.cs->getCU(pos.offset(0, -1), cu.chType)).getloopFilterAcrossEnabledFlag()));
 }
+//确定滤波强度
 
 unsigned DeblockingFilter::xGetBoundaryStrengthSingle ( const CodingUnit& cu, const DeblockEdgeDir edgeDir, const Position& localPos, const ChannelType chType ) const
 {
   // The boundary strength that is output by the function xGetBoundaryStrengthSingle is a multi component boundary strength that contains boundary strength for luma (bits 0 to 1), cb (bits 2 to 3) and cr (bits 4 to 5).
-
+  //函数xGetBoundaryStrengthSingle输出的边界强度是多分量边界强度，它包含luma（位0到1）、cb（位2到3）和cr（位4到5）的边界强度。
   const Slice& sliceQ = *cu.slice;
 
   int shiftHor = cu.Y().valid() ? 0 : ::getComponentScaleX(COMPONENT_Cb, cu.firstPU->chromaFormat);
@@ -730,8 +762,8 @@ unsigned DeblockingFilter::xGetBoundaryStrengthSingle ( const CodingUnit& cu, co
                           *cu.cs->getCU(recalcPosition( cu.chromaFormat, CHANNEL_TYPE_LUMA, CHANNEL_TYPE_CHROMA, posP), CHANNEL_TYPE_CHROMA) :
                           *cu.cs->getCU( posP, cu.chType );
 
-  //-- Set BS for Intra MB : BS = 4 or 3
-  if( ( MODE_INTRA == cuP.predMode ) || ( MODE_INTRA == cuQ.predMode ) )
+  //-- Set BS for Intra MB : BS = 4 or 3 相邻块中的至少一个用intra或CIIP模式编码
+  if( ( MODE_INTRA == cuP.predMode ) || ( MODE_INTRA == cuQ.predMode ) ) //首先处理I帧（包括CIIP）
   {
     if( chType == CHANNEL_TYPE_LUMA )
     {
@@ -765,7 +797,7 @@ unsigned DeblockingFilter::xGetBoundaryStrengthSingle ( const CodingUnit& cu, co
   }
 
   unsigned tmpBs = 0;
-  //-- Set BS for not Intra MB : BS = 2 or 1 or 0
+  //-- Set BS for not Intra MB : BS = 2 or 1 or 0 相邻块中的至少一个具有非零变换系数
   if(chType == CHANNEL_TYPE_LUMA)
   {
     // Y
@@ -821,7 +853,7 @@ unsigned DeblockingFilter::xGetBoundaryStrengthSingle ( const CodingUnit& cu, co
   const MotionInfo&     miP = cuP.cs->getMotionInfo( lumaPosP );
   const Slice&       sliceP = *cuP.slice;
 
-  if (sliceQ.isInterB() || sliceP.isInterB())
+  if (sliceQ.isInterB() || sliceP.isInterB()) //帧间模式 帧间B帧 
   {
     const Picture *piRefP0 = (CU::isIBC(cuP) ? sliceP.getPic() : ((0 > miP.refIdx[0]) ? NULL : sliceP.getRefPic(REF_PIC_LIST_0, miP.refIdx[0])));
     const Picture *piRefP1 = (CU::isIBC(cuP) ? NULL            : ((0 > miP.refIdx[1]) ? NULL : sliceP.getRefPic(REF_PIC_LIST_1, miP.refIdx[1])));
@@ -885,9 +917,10 @@ unsigned DeblockingFilter::xGetBoundaryStrengthSingle ( const CodingUnit& cu, co
   }
 
 
-  // pcSlice->isInterP()
+  // pcSlice->isInterP()  帧间P帧：如果MVD大于等于半像素精度 
   CHECK(CU::isInter(cuP) && 0 > miP.refIdx[0], "Invalid reference picture list index");
   CHECK(CU::isInter(cuP) && 0 > miQ.refIdx[0], "Invalid reference picture list index");
+  //相邻块中的一个以IBC预测模式编码，另一个以帧间预测模式编码
   const Picture *piRefP0 = (CU::isIBC(cuP) ? sliceP.getPic() : sliceP.getRefPic(REF_PIC_LIST_0, miP.refIdx[0]));
   const Picture *piRefQ0 = (CU::isIBC(cuQ) ? sliceQ.getPic() : sliceQ.getRefPic(REF_PIC_LIST_0, miQ.refIdx[0]));
   if (piRefP0 != piRefQ0)
@@ -931,7 +964,17 @@ void DeblockingFilter::deriveLADFShift( const Pel* src, const int stride, int& s
   }
 }
 #endif
+//对亮度像素的一边界进行去块滤波
+/*
+对于每一个长度为4的边界，进行如下过程：
 
+获取滤波开关和滤波强度阈值参数：根据P块和Q块两侧的Qp值计算索引值，根据索引查表获得参数Tc和β
+滤波开关决策，计算边界两侧像素的变化率dL（调用deriveLADFShift函数推导重建像素的平均亮度级）
+如果dL小于β，表明该边界需要进行滤波。
+对于需要滤波的边界，进行滤波强度决策，通过xUseStrongFiltering函数判断是否使用强滤波
+调用xPelFilterLuma函数进行滤波过程
+
+*/
 void DeblockingFilter::xEdgeFilterLuma( const CodingUnit& cu, const DeblockEdgeDir edgeDir, const int iEdge )
 {
   const CompArea&  lumaArea = cu.block(COMPONENT_Y);
@@ -962,7 +1005,7 @@ void DeblockingFilter::xEdgeFilterLuma( const CodingUnit& cu, const DeblockEdgeD
 
   Position pos;
 
-  if (edgeDir == EDGE_VER)
+  if (edgeDir == EDGE_VER)//垂直滤波所需信息
   {
     xoffset   = 0;
     yoffset   = pelsInPart;
@@ -981,15 +1024,20 @@ void DeblockingFilter::xEdgeFilterLuma( const CodingUnit& cu, const DeblockEdgeD
     pos       = Position{ lumaArea.x - xoffset, lumaArea.y + iEdge * pelsInPart };
   }
 
-  const int iBitdepthScale = 1 << (bitDepthLuma - 8);
+  const int iBitdepthScale = 1 << (bitDepthLuma - 8); //处理高位深需要对滤波器进行缩放
 
-  // dec pos since within the loop we first calc the pos
+  // dec pos since within the loop we first calc the pos 遍历所有的minCU
+  // 对于垂直边界，遍历该垂直边界中的所有长度为4的区域，因此iSrcStep=iStride；
+  // 垂直边界滤波处理的是水平方向的像素，因此iOffset=1
+  // 对于水平边界，遍历该水平边界中的所有长度为4的区域，因此iSrcStep=1
+  // 水平边界滤波处理的是垂直方向的像素，因此iOffset=iStride
+
   for( int iIdx = 0; iIdx < uiNumParts; iIdx++ )
   {
     pos.x += xoffset;
     pos.y += yoffset;
 
-    // Deblock luma boundaries on 4x4 grid only
+    // Deblock luma boundaries on 4x4 grid only 只以亮度4x4网格作为边界，否则不滤波
     if (edgeDir == EDGE_HOR && (pos.y % 4) != 0)
     {
       continue;
@@ -998,13 +1046,13 @@ void DeblockingFilter::xEdgeFilterLuma( const CodingUnit& cu, const DeblockEdgeD
     {
       continue;
     }
-    uiBsAbsIdx = getRasterIdx( pos, pcv );
-    uiBs = BsGet(m_aapucBS[edgeDir][uiBsAbsIdx], COMPONENT_Y);
+    uiBsAbsIdx = getRasterIdx( pos, pcv );//获取网格索引
+    uiBs = BsGet(m_aapucBS[edgeDir][uiBsAbsIdx], COMPONENT_Y);//获取对应边界的边界强度
 
     if( uiBs )
     {
-      const CodingUnit& cuQ =  cu;
-      const CodingUnit& cuP = *cu.cs->getCU(pos.offset(xoffset - pelsInPart, yoffset - pelsInPart), cu.chType);
+      const CodingUnit &cuQ = cu;   //当前CU
+      const CodingUnit& cuP = *cu.cs->getCU(pos.offset(xoffset - pelsInPart, yoffset - pelsInPart), cu.chType);// 相邻CU
       // Derive neighboring PU index
       if (edgeDir == EDGE_VER)
       {
@@ -1025,7 +1073,7 @@ void DeblockingFilter::xEdgeFilterLuma( const CodingUnit& cu, const DeblockEdgeD
         }
       }
 
-      iQP = (cuP.qp + cuQ.qp + 1) >> 1;
+      iQP = (cuP.qp + cuQ.qp + 1) >> 1;//获取QP作为第一维索引，后面还要加一个shift
 
 #if LUMA_ADAPTIVE_DEBLOCKING_FILTER_QP_OFFSET
       if ( sps.getLadfEnabled() )
@@ -1038,6 +1086,7 @@ void DeblockingFilter::xEdgeFilterLuma( const CodingUnit& cu, const DeblockEdgeD
 
       bool sidePisLarge   = false;
       bool sideQisLarge   = false;
+      // P和Q的最大滤波长度
       int maxFilterLengthP = m_maxFilterLengthP[COMPONENT_Y][pos.x-m_ctuXLumaSamples][pos.y-m_ctuYLumaSamples];
       int maxFilterLengthQ = m_maxFilterLengthQ[COMPONENT_Y][pos.x-m_ctuXLumaSamples][pos.y-m_ctuYLumaSamples];
       if (maxFilterLengthP > 3)
@@ -1046,6 +1095,7 @@ void DeblockingFilter::xEdgeFilterLuma( const CodingUnit& cu, const DeblockEdgeD
         if ( maxFilterLengthP > 5 )
         {
           // restrict filter length if sub-blocks are used (e.g affine or ATMVP)
+          // 如果使用子块，则限制过滤器长度（例如，affine或ATMVP）   
           if (cuP.affine)
           {
             maxFilterLengthP = std::min(maxFilterLengthP, 5);
@@ -1061,6 +1111,7 @@ void DeblockingFilter::xEdgeFilterLuma( const CodingUnit& cu, const DeblockEdgeD
       {
         sidePisLarge = false;
       }
+      /**************** 获取查表得到的tc，beta数值 ****************/
       const int iIndexTC  = Clip3(0, MAX_QP + DEFAULT_INTRA_TC_OFFSET, int(iQP + DEFAULT_INTRA_TC_OFFSET*(uiBs - 1) + (tcOffsetDiv2 << 1)));
       const int iIndexB   = Clip3(0, MAX_QP, iQP + (betaOffsetDiv2 << 1));
 
@@ -1071,37 +1122,40 @@ void DeblockingFilter::xEdgeFilterLuma( const CodingUnit& cu, const DeblockEdgeD
 
       const unsigned uiBlocksInPart = pelsInPart / 4 ? pelsInPart / 4 : 1;
 
-      for( int iBlkIdx = 0; iBlkIdx < uiBlocksInPart; iBlkIdx++ )
-      {
+      for( int iBlkIdx = 0; iBlkIdx < uiBlocksInPart; iBlkIdx++ )//遍历每个minCU中的4x4的块
+      { /****************** 1.2 根据像素的变化率，来进行一次滤波开关决策，与QP找到的beta有关 ******************/
+        //对于垂直边界，计算水平方向的变化率；对于水平边界，计算垂直方向的变化率
+
         const int dp0 = xCalcDP(piTmpSrc + iSrcStep*(iIdx*pelsInPart + iBlkIdx * 4 + 0), iOffset);
         const int dq0 = xCalcDQ(piTmpSrc + iSrcStep*(iIdx*pelsInPart + iBlkIdx * 4 + 0), iOffset);
         const int dp3 = xCalcDP(piTmpSrc + iSrcStep*(iIdx*pelsInPart + iBlkIdx * 4 + 3), iOffset);
         const int dq3 = xCalcDQ(piTmpSrc + iSrcStep*(iIdx*pelsInPart + iBlkIdx * 4 + 3), iOffset);
-        int dp0L = dp0;
+        int dp0L = dp0;//对大块变化率的初始化
         int dq0L = dq0;
         int dp3L = dp3;
         int dq3L = dq3;
 
-        if (sidePisLarge)
+        if (sidePisLarge)//如果P是大块
         {
           dp0L = (dp0L + xCalcDP(piTmpSrc + iSrcStep*(iIdx*pelsInPart + iBlkIdx * 4 + 0) - 3 * iOffset, iOffset) + 1) >> 1;
           dp3L = (dp3L + xCalcDP(piTmpSrc + iSrcStep*(iIdx*pelsInPart + iBlkIdx * 4 + 3) - 3 * iOffset, iOffset) + 1) >> 1;
         }
-        if (sideQisLarge)
+        if (sideQisLarge)//如果Q是大块
         {
           dq0L = (dq0L + xCalcDQ(piTmpSrc + iSrcStep*(iIdx*pelsInPart + iBlkIdx * 4 + 0) + 3 * iOffset, iOffset) + 1) >> 1;
           dq3L = (dq3L + xCalcDQ(piTmpSrc + iSrcStep*(iIdx*pelsInPart + iBlkIdx * 4 + 3) + 3 * iOffset, iOffset) + 1) >> 1;
         }
+        /****************** 大块：双线性强滤波 ******************/
         bool useLongtapFilter = false;
         if (sidePisLarge || sideQisLarge)
-        {
-          int d0L = dp0L + dq0L;
+        {//此处设计快速算法，仅计算首尾两行/列
+          int d0L = dp0L + dq0L; 
           int d3L = dp3L + dq3L;
 
           int dpL = dp0L + dp3L;
           int dqL = dq0L + dq3L;
 
-          int dL = d0L + d3L;
+          int dL = d0L + d3L;//总变化率
 
           bPartPNoFilter = bPartQNoFilter = false;
           if (spsPaletteEnabledFlag)
@@ -1110,21 +1164,24 @@ void DeblockingFilter::xEdgeFilterLuma( const CodingUnit& cu, const DeblockEdgeD
             bPartPNoFilter = bPartPNoFilter || CU::isPLT(cuP);
             bPartQNoFilter = bPartQNoFilter || CU::isPLT(cuQ);
           }
-
-          if (dL < iBeta)
+          //根据像素的变化率，来进行一次滤波强弱选择，与beta和tc都有
+          if (dL < iBeta)//滤波开关判断
           {
             const bool filterP = (dpL < iSideThreshold);
             const bool filterQ = (dqL < iSideThreshold);
-
+            //对于垂直边界，src0和src3表示第0行和第3行的像素；对于水平边界，src0和src3表示第0列和第3列的像素
             Pel* src0 = piTmpSrc + iSrcStep * (iIdx*pelsInPart + iBlkIdx * 4 + 0);
             Pel* src3 = piTmpSrc + iSrcStep * (iIdx*pelsInPart + iBlkIdx * 4 + 3);
 
             // adjust decision so that it is not read beyond p5 is maxFilterLengthP is 5 and q5 if maxFilterLengthQ is 5
+            // 调整决策，使其读数不超过p5为maxFilterLengthP为5，如果maxFilterLengthQ为5，则为q5
             const bool swL = xUseStrongFiltering(src0, iOffset, 2 * d0L, iBeta, iTc, sidePisLarge, sideQisLarge, maxFilterLengthP, maxFilterLengthQ)
               && xUseStrongFiltering(src3, iOffset, 2 * d3L, iBeta, iTc, sidePisLarge, sideQisLarge, maxFilterLengthP, maxFilterLengthQ);
-            if (swL)
+            if (swL)//更强滤波
             {
               useLongtapFilter = true;
+              // 对于垂直边界，滤波四行的像素
+              // 对于水平边界，滤波四列的像素
               for (int i = 0; i < DEBLOCK_SMALLEST_BLOCK / 2; i++)
               {
                 xPelFilterLuma(piTmpSrc + iSrcStep*(iIdx*pelsInPart + iBlkIdx * 4 + i), iOffset, iTc, swL, bPartPNoFilter, bPartQNoFilter, iThrCut, filterP, filterQ, clpRng, sidePisLarge, sideQisLarge, maxFilterLengthP, maxFilterLengthQ);
@@ -1150,7 +1207,7 @@ void DeblockingFilter::xEdgeFilterLuma( const CodingUnit& cu, const DeblockEdgeD
             bPartQNoFilter = bPartQNoFilter || CU::isPLT(cuQ);
           }
 
-          if (d < iBeta)
+          if (d < iBeta)//滤波开关决策
           {
             bool bFilterP = false;
             bool bFilterQ = false;
@@ -1160,7 +1217,7 @@ void DeblockingFilter::xEdgeFilterLuma( const CodingUnit& cu, const DeblockEdgeD
               bFilterQ = (dq < iSideThreshold);
             }
             bool sw = false;
-            if (maxFilterLengthP > 2 && maxFilterLengthQ > 2)
+            if (maxFilterLengthP > 2 && maxFilterLengthQ > 2)//滤波强度决策
             {
               sw = xUseStrongFiltering(piTmpSrc + iSrcStep * (iIdx * pelsInPart + iBlkIdx * 4 + 0), iOffset, 2 * d0,
                                        iBeta, iTc)
@@ -1179,7 +1236,7 @@ void DeblockingFilter::xEdgeFilterLuma( const CodingUnit& cu, const DeblockEdgeD
   }
 }
 
-
+//xEdgeFilterChroma函数过程和亮度xEdgeFilterLuma类似，不同的是该过程遍历边界时是以2为单位进行遍历的
 void DeblockingFilter::xEdgeFilterChroma(const CodingUnit& cu, const DeblockEdgeDir edgeDir, const int iEdge)
 {
   const Position lumaPos   = cu.Y().valid() ? cu.Y().pos() : recalcPosition( cu.chromaFormat, cu.chType, CHANNEL_TYPE_LUMA, cu.blocks[cu.chType].pos() );
@@ -1507,7 +1564,7 @@ inline void DeblockingFilter::xFilteringPandQ(Pel* src, int offset, int numberPS
 inline void DeblockingFilter::xPelFilterLuma(Pel* piSrc, const int iOffset, const int tc, const bool sw, const bool bPartPNoFilter, const bool bPartQNoFilter, const int iThrCut, const bool bFilterSecondP, const bool bFilterSecondQ, const ClpRng& clpRng, bool sidePisLarge, bool sideQisLarge, int maxFilterLengthP, int maxFilterLengthQ) const
 {
   int delta;
-
+  /******** 初始化像素位置、像素值 *******/
   const Pel m4  = piSrc[ 0          ];
   const Pel m3  = piSrc[-iOffset    ];
   const Pel m5  = piSrc[ iOffset    ];
@@ -1524,14 +1581,14 @@ inline void DeblockingFilter::xPelFilterLuma(Pel* piSrc, const int iOffset, cons
   const Pel m9  = piSrc[ iOffset * 5];
   const Pel m10 = piSrc[ iOffset * 6];
   const char tc3[3] = { 3, 2, 1};
-  if (sw)
+  if (sw)//强滤波
   {
-    if (sidePisLarge || sideQisLarge)
+    if (sidePisLarge || sideQisLarge)//如果是大块，那么进行双线性滤波
     {
       xFilteringPandQ(piSrc, iOffset, sidePisLarge ? maxFilterLengthP : 3, sideQisLarge ? maxFilterLengthQ : 3, tc);
     }
     else
-    {
+    {/* Weak filter 弱滤波 */
       piSrc[-iOffset]     = Clip3(m3 - tc3[0] * tc, m3 + tc3[0] * tc, ((m1 + 2 * m2 + 2 * m3 + 2 * m4 + m5 + 4) >> 3));
       piSrc[0]            = Clip3(m4 - tc3[0] * tc, m4 + tc3[0] * tc, ((m2 + 2 * m3 + 2 * m4 + 2 * m5 + m6 + 4) >> 3));
       piSrc[-iOffset * 2] = Clip3(m2 - tc3[1] * tc, m2 + tc3[1] * tc, ((m1 + m2 + m3 + m4 + 2) >> 2));
@@ -1546,7 +1603,7 @@ inline void DeblockingFilter::xPelFilterLuma(Pel* piSrc, const int iOffset, cons
     delta = ( 9 * ( m4 - m3 ) - 3 * ( m5 - m2 ) + 8 ) >> 4;
 
     if ( abs(delta) < iThrCut )
-    {
+    {//如果不满足该条件，说明不连续可能是内容导致的
       delta = Clip3( -tc, tc, delta );
       piSrc[-iOffset] = ClipPel( m3 + delta, clpRng);
       piSrc[0]        = ClipPel( m4 - delta, clpRng);
@@ -1665,7 +1722,7 @@ inline void DeblockingFilter::xPelFilterChroma(Pel* piSrc, const int iOffset, co
 }
 
 /**
- - Decision between strong and weak filter
+ - Decision between strong and weak filter 进行滤波强度决策
  .
  \param offset         offset value for picture data
  \param d               d value
@@ -1675,26 +1732,26 @@ inline void DeblockingFilter::xPelFilterChroma(Pel* piSrc, const int iOffset, co
  */
 inline bool DeblockingFilter::xUseStrongFiltering(Pel* piSrc, const int iOffset, const int d, const int beta, const int tc, bool sidePisLarge, bool sideQisLarge, int maxFilterLengthP, int maxFilterLengthQ, bool isChromaHorCTBBoundary) const
 {
-  const Pel m4 = piSrc[ 0          ];
-  const Pel m3 = piSrc[-iOffset    ];
-  const Pel m7 = piSrc[ iOffset * 3];
-  const Pel m0 = piSrc[-iOffset * 4];
+  const Pel m4 = piSrc[ 0          ];//          **             **   **             ** 
+  const Pel m3 = piSrc[-iOffset    ];//          m0   m1   m2   m3   m4   m5   m6   m7
+  const Pel m7 = piSrc[ iOffset * 3];//                              |
+  const Pel m0 = piSrc[-iOffset * 4];//                    **    当前起始位置[0]（Q块）
   const Pel m2 = piSrc[-iOffset * 2];
-  int       sp3 = abs(m0 - m3);
-  if (isChromaHorCTBBoundary)
+  int       sp3 = abs(m0 - m3);//最左边的位置减去左侧边缘
+  if (isChromaHorCTBBoundary)//如果是色度CTU边缘，则看相邻边缘
   {
     sp3 = abs(m2 - m3);
   }
-  int       sq3      = abs(m7 - m4);
-  const int d_strong = sp3 + sq3;
+  int       sq3      = abs(m7 - m4);//最右边的位置减去右侧边缘
+  const int d_strong = sp3 + sq3;// 两者的差距
 
-  if (sidePisLarge || sideQisLarge)
+  if (sidePisLarge || sideQisLarge)//对于大块，进一步增加长度
   {
     Pel mP4;
     Pel m11;
-    if (sidePisLarge)
+    if (sidePisLarge)//如果P是大块
     {
-      if (maxFilterLengthP == 7)
+      if (maxFilterLengthP == 7)//如果P块滤波长度为7，则扩展到左侧第七个像素
       {
         const Pel mP5 = piSrc[-iOffset * 5];
         const Pel mP6 = piSrc[-iOffset * 6];
@@ -1708,7 +1765,7 @@ inline bool DeblockingFilter::xUseStrongFiltering(Pel* piSrc, const int iOffset,
       }
       sp3 = (sp3 + abs(m0 - mP4) + 1) >> 1;
     }
-    if (sideQisLarge)
+    if (sideQisLarge)//如果Q是大块
     {
       if (maxFilterLengthQ == 7)
       {

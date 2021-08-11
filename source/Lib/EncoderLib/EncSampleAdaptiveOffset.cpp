@@ -213,25 +213,27 @@ void EncSampleAdaptiveOffset::SAOProcess( CodingStructure& cs, bool* sliceEnable
 #endif
                                           const bool bTestSAODisableAtPictureLevel, const double saoEncodingRate, const double saoEncodingRateChroma, const bool isPreDBFSamplesUsed, bool isGreedyMergeEncoding, bool usingTrueOrg )
 {
-  PelUnitBuf org = usingTrueOrg ? cs.getTrueOrgBuf() : cs.getOrgBuf();
-  PelUnitBuf res = cs.getRecoBuf();
+  PelUnitBuf org = usingTrueOrg ? cs.getTrueOrgBuf() : cs.getOrgBuf();//原始YUV
+  PelUnitBuf res = cs.getRecoBuf();//重建YUV
   PelUnitBuf src = m_tempBuf;
   memcpy(m_lambda, lambdas, sizeof(m_lambda));
 
-  src.copyFrom(res);
+  src.copyFrom(res);//将recYuv复制给srcYuv；
 
   //collect statistics
-  getStatistics(m_statData, org, src, cs);
+  getStatistics(m_statData, org, src, cs);//统计数据特性，结果存放在m_statData里
   if(isPreDBFSamplesUsed)
   {
-    addPreDBFStatistics(m_statData);
+    addPreDBFStatistics(m_statData);//在上一步得到的统计信息的基础上加上预先去方块滤波的信息
   }
 
   //slice on/off
+
   decidePicParams(*cs.slice, sliceEnabled, saoEncodingRate, saoEncodingRateChroma);
 
   //block on/off
   std::vector<SAOBlkParam> reconParams(cs.pcv->sizeInCtus);
+  //真正进行SAO操作的函数
   decideBlkParams( cs, sliceEnabled, m_statData, src, res, &reconParams[0], cs.picture->getSAO(), bTestSAODisableAtPictureLevel,
 #if ENABLE_QPA
                    lambdaChromaWeight,
