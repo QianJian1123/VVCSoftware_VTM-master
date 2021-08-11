@@ -1424,6 +1424,7 @@ bool EncApp::encode()
   bool keepDoing = false;
 
   // call encoding function for one frame
+  //进入帧级别的编码
   if( m_isField )
   {
     keepDoing = m_cEncLib.encode( snrCSC, m_recBufList, m_numEncoded, m_isTopFieldFirst );

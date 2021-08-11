@@ -62,7 +62,7 @@
 #define JVET_W0043                                        1 // Alignment of smooth block QP control with adaptive QP in VTM
 
 //########### place macros to be be kept below this line ###############
-#define GDR_ENABLED   1
+#define GDR_ENABLED   0
 
 #if GDR_ENABLED
 #define GDR_LEAK_TEST  0

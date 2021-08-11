@@ -1220,7 +1220,7 @@ void InterSearch::xIntraPatternSearch(PredictionUnit& pu, IntTZSearchStruct&  cS
       goto end;
     }
 
-
+    //尺寸小于16×16
     if (pu.lwidth() < 16 && pu.lheight() < 16)
     {
       for (int y = std::max(srchRngVerTop, -cuPelY); y <= srchRngVerBottom; y += 2)
@@ -1487,10 +1487,11 @@ void InterSearch::xIBCEstimation(PredictionUnit& pu, PelUnitBuf& origBuf,
 
   m_cDistParam.useMR = false;
   m_pcRdCost->setDistParam(m_cDistParam, *cStruct.pcPatternKey, cStruct.piRefY, cStruct.iRefStride, m_lumaClpRng.bd, COMPONENT_Y, cStruct.subShiftMode);
-  bool buffered = false;
+  bool buffered = false;//用于记录是否有可用的
   if (m_pcEncCfg->getIBCFastMethod() & IBC_FAST_METHOD_BUFFERBV)
   {
     ruiCost = MAX_UINT;
+    //使用历史BV
     std::unordered_map<Mv, Distortion>& history = m_ctuRecord[pu.lumaPos()][pu.lumaSize()].bvRecord;
     for (std::unordered_map<Mv, Distortion>::iterator p = history.begin(); p != history.end(); p++)
     {
@@ -1507,6 +1508,7 @@ void InterSearch::xIBCEstimation(PredictionUnit& pu, PelUnitBuf& origBuf,
       }
       if (validCand && searchBv(pu, cuPelX, cuPelY, iRoiWidth, iRoiHeight, iPicWidth, iPicHeight, xBv, yBv, lcuWidth))
 #else
+      //检测搜索范围是否合法 因为VVC的IBC使用的是带限制的IBC搜索 范围在当前CTU和左边CTU
       if (searchBv(pu, cuPelX, cuPelY, iRoiWidth, iRoiHeight, iPicWidth, iPicHeight, xBv, yBv, lcuWidth))
 #endif
       {
@@ -1522,6 +1524,7 @@ void InterSearch::xIBCEstimation(PredictionUnit& pu, PelUnitBuf& origBuf,
         else if (sad == ruiCost)
         {
           // stabilise the search through the unordered list
+          //SAD相同 使用BV更小的
           if (bv.hor < rcMv.getHor()
             || (bv.hor == rcMv.getHor() && bv.ver < rcMv.getVer()))
           {
@@ -1536,7 +1539,7 @@ void InterSearch::xIBCEstimation(PredictionUnit& pu, PelUnitBuf& origBuf,
     {
       Mv cMvPredEncOnly[IBC_NUM_CANDIDATES];
       int nbPreds = 0;
-      PU::getIbcMVPsEncOnly(pu, cMvPredEncOnly, nbPreds);
+      PU::getIbcMVPsEncOnly(pu, cMvPredEncOnly, nbPreds);//获取MVP
 
       for (unsigned int cand = 0; cand < nbPreds; cand++)
       {
@@ -1658,9 +1661,9 @@ bool InterSearch::predIBCSearch(CodingUnit& cu, Partitioner& partitioner, const 
 #endif
     //////////////////////////////////////////////////////////
     /// ibc search
-    pu.cu->imv = 2;
+    pu.cu->imv = 2;//2表示整数精度
     AMVPInfo amvpInfo4Pel;
-    PU::fillIBCMvpCand(pu, amvpInfo4Pel);
+    PU::fillIBCMvpCand(pu, amvpInfo4Pel);//AMVP获取
 
     pu.cu->imv = 0;// (Int)cu.cs->sps->getUseIMV(); // set as IMV=0 initially
     Mv    cMv, cMvPred[2];
@@ -1681,7 +1684,7 @@ bool InterSearch::predIBCSearch(CodingUnit& cu, Partitioner& partitioner, const 
       iBvpNum = 1;
       cMvPred[1] = cMvPred[0];
     }
-
+    //IBC Hash搜索 
     if (m_pcEncCfg->getIBCHashSearch())
     {
       xxIBCHashSearch(pu, cMvPred, iBvpNum, cMv, bvpIdxBest, ibcHashMap);
@@ -2341,7 +2344,7 @@ bool InterSearch::xHashInterEstimation(PredictionUnit& pu, RefPicList& bestRefPi
 {
   int width = pu.cu->lumaSize().width;
   int height = pu.cu->lumaSize().height;
-  if (width != height)
+  if (width != height)//如果是方形 那么方形Hash运动估计
   {
     return xRectHashInterEstimation(pu, bestRefPicList, bestRefIndex, bestMv, bestMvd, bestMVPIndex, isPerfectMatch);
   }
@@ -2351,7 +2354,7 @@ bool InterSearch::xHashInterEstimation(PredictionUnit& pu, RefPicList& bestRefPi
   uint32_t hashValue1;
   uint32_t hashValue2;
   Distortion bestCost = UINT64_MAX;
-
+  //获取当前块的Hash值
   if (!TComHash::getBlockHashValue((pu.cs->picture->getOrigBuf()), width, height, xPos, yPos, pu.cu->slice->getSPS()->getBitDepths(), hashValue1, hashValue2))
   {
     return false;
@@ -2371,12 +2374,13 @@ bool InterSearch::xHashInterEstimation(PredictionUnit& pu, RefPicList& bestRefPi
   int imvBest = 0;
 
   int numPredDir = pu.cu->slice->isInterP() ? 1 : 2;
+  //双向or单向
   for (int refList = 0; refList < numPredDir; refList++)
   {
     RefPicList eRefPicList = (refList == 0) ? REF_PIC_LIST_0 : REF_PIC_LIST_1;
     int refPicNumber = pu.cu->slice->getNumRefIdx(eRefPicList);
 
-
+    //某一方向内的参考帧
     for (int refIdx = 0; refIdx < refPicNumber; refIdx++)
     {
       int bitsOnRefIdx = 1;
@@ -2407,12 +2411,15 @@ bool InterSearch::xHashInterEstimation(PredictionUnit& pu, RefPicList& bestRefPi
         }
 
         list<BlockHash> listBlockHash;
+        //根据当前参考帧的Hashmap 快速查找hashVal2相同的块，同时根据运动矢量的指数哥伦布编码代价排序
         selectMatchesInter(pu.cu->slice->getRefPic(eRefPicList, refIdx)->getHashMap()->getFirstIterator(hashValue1), count, listBlockHash, currBlockHash);
         m_numHashMVStoreds[eRefPicList][refIdx] = (int)listBlockHash.size();
+        //如果为空 当前帧没有hash匹配块
         if (listBlockHash.empty())
         {
           continue;
         }
+        /*------------以下 使用AMVP对hash匹配块进行编码*/
         AMVPInfo currAMVPInfoPel;
         AMVPInfo currAMVPInfo4Pel;
 #if GDR_ENABLED
@@ -2475,6 +2482,7 @@ bool InterSearch::xHashInterEstimation(PredictionUnit& pu, RefPicList& bestRefPi
 
         list<BlockHash>::iterator it;
         int countMV = 0;
+        //遍历hash匹配块 使用AMVP信息确定最佳
         for (it = listBlockHash.begin(); it != listBlockHash.end(); ++it)
         {
           int curMVPIdx = 0;
@@ -2503,7 +2511,7 @@ bool InterSearch::xHashInterEstimation(PredictionUnit& pu, RefPicList& bestRefPi
             continue;
           }
 #endif
-
+          //使用两个MVP
           for (int mvpIdxTemp = 0; mvpIdxTemp < 2; mvpIdxTemp++)
           {
             Mv cMvPredPel = currAMVPInfoQPel.mvCand[mvpIdxTemp];
@@ -2588,7 +2596,7 @@ bool InterSearch::xHashInterEstimation(PredictionUnit& pu, RefPicList& bestRefPi
                 }
               }
             }
-          }
+          }//两个MVP
 
 #if GDR_ENABLED
           if (isEncodeGdrClean && !anyCandOk)
@@ -2636,6 +2644,7 @@ bool InterSearch::xHashInterEstimation(PredictionUnit& pu, RefPicList& bestRefPi
       }
     }
   }
+  //最佳结果保存
   pu.cu->imv = imvBest;
   if (bestMvd == Mv(0, 0))
   {
@@ -2698,27 +2707,30 @@ void InterSearch::predInterSearch(CodingUnit& cu, Partitioner& partitioner)
 {
   CodingStructure& cs = *cu.cs;
 
+  //AMVP列表的暂时变量
   AMVPInfo     amvp[2];
   Mv           cMvSrchRngLT;
   Mv           cMvSrchRngRB;
 
   Mv           cMvZero;
-
+  // RPL0/1各自单向预测时的最佳情况下的MV
   Mv           cMv[2];
+  // 双向预测时的最佳情况下的MV
   Mv           cMvBi[2];
-  Mv           cMvTemp[2][33];
-  Mv           cMvHevcTemp[2][33];
+  Mv           cMvTemp[2][33];//相对应的单向预测，mv的暂时变量
+  Mv           cMvHevcTemp[2][33];//相对应的单向预测，最优情况下的MV
   int          iNumPredDir = cs.slice->isInterP() ? 1 : 2;
 
-  Mv           cMvPred[2][33];
+  Mv           cMvPred[2][33];//相对应的单向预测，RD决策后最优情况下的MVP
 
-  Mv           cMvPredBi[2][33];
-  int          aaiMvpIdxBi[2][33];
+  Mv           cMvPredBi[2][33];//用来存储双向预测时的MVP
+  int          aaiMvpIdxBi[2][33];//用来存储双向预测时的AMVP列表的索引
 
-  int          aaiMvpIdx[2][33];
-  int          aaiMvpNum[2][33];
+  int          aaiMvpIdx[2][33];//相对应的单向预测，RD决策后最优情况下的AMVP列表的索引
+  int          aaiMvpNum[2][33];//相对应的单向预测，RD决策后最优情况下的AMVP的的候选MVP的数量
 
 #if GDR_ENABLED
+  //这部分是GDR相关的信息 
   bool         cMvSolid[2];
   bool         cMvValid[2];
   bool         cMvBiSolid[2];
@@ -2749,10 +2761,10 @@ void InterSearch::predInterSearch(CodingUnit& cu, Partitioner& partitioner)
   bool         bCleanCandExist;
 #endif
 
-  AMVPInfo     aacAMVPInfo[2][33];
+  AMVPInfo     aacAMVPInfo[2][33];//相对应的，AMVP列表信息
 
   int          iRefIdx[2]={0,0}; //If un-initialized, may cause SEGV in bi-directional prediction iterative stage.
-  int          iRefIdxBi[2] = { -1, -1 };
+  int          iRefIdxBi[2] = { -1, -1 };// 双向预测时的最佳情况下参考帧在RPL0/1中的索引
 
   uint32_t         uiMbBits[3] = {1, 1, 0};
 
@@ -2762,12 +2774,12 @@ void InterSearch::predInterSearch(CodingUnit& cu, Partitioner& partitioner)
 
   int          symMode = 0;
 
-  int          bestBiPRefIdxL1 = 0;
-  int          bestBiPMvpL1    = 0;
-  Distortion   biPDistTemp     = std::numeric_limits<Distortion>::max();
+  int          bestBiPRefIdxL1 = 0;//参考帧列表为1时，AMVP的MVP直接当MV来单向预测时，最优情况下的参考帧在RPL1的索引
+  int          bestBiPMvpL1    = 0;//参考帧列表为1时，AMVP的MVP直接当MV来单向预测时，最优情况下的AMVP列表的索引
+  Distortion   biPDistTemp     = std::numeric_limits<Distortion>::max();//上述情况下 Rdcost的暂时变量
 
   uint8_t      bcwIdx          = (cu.cs->slice->isInterB() ? cu.BcwIdx : BCW_DEFAULT);
-  bool         enforceBcwPred = false;
+  bool         enforceBcwPred = false;//为true表示，由于开启BCW必须选择双向预测
   MergeCtx     mergeCtx;
 
   // Loop over Prediction Units
@@ -2776,12 +2788,19 @@ void InterSearch::predInterSearch(CodingUnit& cu, Partitioner& partitioner)
   auto &pu = *cu.firstPU;
   WPScalingParam *wp0;
   WPScalingParam *wp1;
-  int tryBipred = 0;
-  bool checkAffine    = (pu.cu->imv == 0 || pu.cu->slice->getSPS()->getAffineAmvrEnabledFlag()) && pu.cu->imv != IMV_HPEL;
+  int tryBipred = 0;//是否尝试过进行双向预测
+  bool checkAffine    = (pu.cu->imv == 0 || pu.cu->slice->getSPS()->getAffineAmvrEnabledFlag()) && pu.cu->imv != IMV_HPEL;//是否测试affine的帧间预测
+  //是否测试affine的帧间预测
+
   bool checkNonAffine = pu.cu->imv == 0 || pu.cu->imv == IMV_HPEL || (pu.cu->slice->getSPS()->getAMVREnabledFlag() &&
-                                            pu.cu->imv <= (pu.cu->slice->getSPS()->getAMVREnabledFlag() ? IMV_4PEL : 0));
+                                            pu.cu->imv <= (pu.cu->slice->getSPS()->getAMVREnabledFlag() ? IMV_4PEL : 0));//是否测试非affine的帧间预测
+  //是否测试非affine的帧间预测
+
   CodingUnit *bestCU  = pu.cu->cs->bestCS != nullptr ? pu.cu->cs->bestCS->getCU( CHANNEL_TYPE_LUMA ) : nullptr;
-  bool trySmvd        = ( bestCU != nullptr && pu.cu->imv == 2 && checkAffine ) ? ( !bestCU->firstPU->mergeFlag && !bestCU->affine ) : true;
+  bool trySmvd        = ( bestCU != nullptr && pu.cu->imv == 2 && checkAffine ) ? ( !bestCU->firstPU->mergeFlag && !bestCU->affine ) : true;//是否测试SMVD
+  //是否测试SMVD 对称MVD
+
+  //最佳为Affine时 才会测试AFFINE的AMVP
   if ( pu.cu->imv && bestCU != nullptr && checkAffine )
   {
     checkAffine = !( bestCU->firstPU->mergeFlag || !bestCU->affine );
@@ -2865,10 +2884,14 @@ void InterSearch::predInterSearch(CodingUnit& cu, Partitioner& partitioner)
     }
 
     PU::spanMotionInfo( pu );
-    Distortion   uiHevcCost = std::numeric_limits<Distortion>::max();
+    Distortion   uiHevcCost = std::numeric_limits<Distortion>::max();//非affine情况下的最优RDcost
     Distortion   uiAffineCost = std::numeric_limits<Distortion>::max();
-    Distortion   uiCost[2] = { std::numeric_limits<Distortion>::max(), std::numeric_limits<Distortion>::max() };
-    Distortion   uiCostBi  =   std::numeric_limits<Distortion>::max();
+    
+    // RPL0/1各自单向预测时的最佳RDcost
+    Distortion   uiCost[2] = { std::numeric_limits<Distortion>::max(), std::numeric_limits<Distortion>::max() };// RPL0/1各自单向预测时的最佳RDcost
+    
+    // 双向预测时的最佳RDcost
+    Distortion   uiCostBi  =   std::numeric_limits<Distortion>::max();// 双向预测时的最佳RDcost
     Distortion   uiCostTemp;
 
 #if GDR_ENABLED
@@ -2879,38 +2902,40 @@ void InterSearch::predInterSearch(CodingUnit& cu, Partitioner& partitioner)
     uiHevcCostOk = false;
     uiAffineCostOk = false;
 #endif
-
+    // 0,1是RPL0/1各自单向预测时的最佳情况下花费的比特数，2是双向预测时的最佳情况下花费的比特数
     uint32_t         uiBits[3];
     uint32_t         uiBitsTemp;
-    Distortion   bestBiPDist = std::numeric_limits<Distortion>::max();
+    Distortion   bestBiPDist = std::numeric_limits<Distortion>::max();//参考帧列表为1时，AMVP的MVP直接当MV来单项预测时的最优RDcost
 
-    Distortion   uiCostTempL0[MAX_NUM_REF];
+    Distortion   uiCostTempL0[MAX_NUM_REF];//参考帧列表为0时单向预测的RDcost
     for (int iNumRef=0; iNumRef < MAX_NUM_REF; iNumRef++)
     {
       uiCostTempL0[iNumRef] = std::numeric_limits<Distortion>::max();
     }
-    uint32_t         uiBitsTempL0[MAX_NUM_REF];
+    uint32_t         uiBitsTempL0[MAX_NUM_REF];//参考帧列表为0时单向预测的所用的比特数
 
-    Mv           mvValidList1;
-    int          refIdxValidList1 = 0;
-    uint32_t         bitsValidList1   = MAX_UINT;
-    Distortion   costValidList1   = std::numeric_limits<Distortion>::max();
+    Mv           mvValidList1; //参考帧列表为1时，参考帧不存在RPL0时单向预测,最佳情况的MV
+    int          refIdxValidList1 = 0;//参考帧列表为1时，参考帧不存在RPL0时单向预测,最佳情况下参考帧在RPL1的索引
+    uint32_t         bitsValidList1   = MAX_UINT;//参考帧列表为1时，参考帧不存在RPL0时单向预测,最佳情况所花费的比特数
+    Distortion   costValidList1   = std::numeric_limits<Distortion>::max();//参考帧列表为1时，参考帧不存在RPL0时单向预测的最佳RDcost
 
     PelUnitBuf origBuf = pu.cs->getOrgBuf( pu );
 
     xGetBlkBits( cs.slice->isInterP(), puIdx, uiLastMode, uiMbBits );
 
     m_pcRdCost->selectMotionLambda( );
-
+    /*-------开始预测相关内容--------*/
     unsigned imvShift = pu.cu->imv == IMV_HPEL ? 1 : (pu.cu->imv << 1);
     if ( checkNonAffine )
     {
-      //  Uni-directional prediction
+      //  Uni-directional prediction 单向
+      // 遍历参考帧。以B帧为例就是先遍历RPL0（reference picture list 0，参考帧列表0），再遍历RPL1
       for ( int iRefList = 0; iRefList < iNumPredDir; iRefList++ )
       {
         RefPicList  eRefPicList = ( iRefList ? REF_PIC_LIST_1 : REF_PIC_LIST_0 );
         for (int iRefIdxTemp = 0; iRefIdxTemp < cs.slice->getNumRefIdx(eRefPicList); iRefIdxTemp++)
         {
+
           uiBitsTemp = uiMbBits[iRefList];
           if ( cs.slice->getNumRefIdx(eRefPicList) > 1 )
           {
@@ -2920,6 +2945,10 @@ void InterSearch::predInterSearch(CodingUnit& cu, Partitioner& partitioner)
               uiBitsTemp--;
             }
           }
+          //以上 计算加入语法元素ref_idx_l0/1花费的比特数
+
+          //RD决策出用AMVP的MVP直接当MV的最优情况 
+          //从AMVP候选MVP列表中挑个合适的MVP。里面调用了fillMvpCand()构造AMVP的候选MVP列表
           xEstimateMvPredAMVP( pu, origBuf, eRefPicList, iRefIdxTemp, cMvPred[iRefList][iRefIdxTemp], amvp[eRefPicList], false, &biPDistTemp);
 
           aaiMvpIdx[iRefList][iRefIdxTemp] = pu.mvpIdx[eRefPicList];
@@ -2969,9 +2998,10 @@ void InterSearch::predInterSearch(CodingUnit& cu, Partitioner& partitioner)
           }
 
           uiBitsTemp += m_auiMVPIdxCost[aaiMvpIdx[iRefList][iRefIdxTemp]][AMVP_MAX_NUM_CANDS];
+          //更新一些变量，uiBitsTemp加上语法元素mvp_l0/1_flag花费的比特数
 
           if ( m_pcEncCfg->getFastMEForGenBLowDelayEnabled() && iRefList == 1 )    // list 1
-          {
+          {//遍历到RPL1时，如果参考帧在RPL0也存在时，直接用其D避免运动估计
             if ( cs.slice->getList1IdxToList0Idx( iRefIdxTemp ) >= 0 )
             {
               cMvTemp[1][iRefIdxTemp] = cMvTemp[0][cs.slice->getList1IdxToList0Idx( iRefIdxTemp )];
@@ -3055,6 +3085,16 @@ void InterSearch::predInterSearch(CodingUnit& cu, Partitioner& partitioner)
             }
 #endif
           }
+          //上面一大段主要是调用xMotionEstimation()来进行运动估计 
+          //运动估计会先进行整像素运动搜索
+          //之后对于1/4，1/2精度的AMVR就进行亚像素精度运动估计
+          //对于1，4像素精度的AMVR还会在最优MV周围搜搜。
+          //单向预测一般都是用TZsearch算法进行运动搜索，运动搜索范围比较大，不固定。
+          //双向预测一般固定一侧对另一侧进行运动搜索，一般用全搜索算法，运动搜索范围较小，一般为4像素。
+        
+          //遍历到RPL1时，如果参考帧在RPL0也存在时，直接用其D避免运动估计
+
+          //存储不开启BCW时单向预测的D和MV，这样开启BCW时就不用再运动估计
           if( cu.cs->sps->getUseBcw() && cu.BcwIdx == BCW_DEFAULT && cu.cs->slice->isInterB() )
           {
             const bool checkIdentical = true;
@@ -3067,6 +3107,7 @@ void InterSearch::predInterSearch(CodingUnit& cu, Partitioner& partitioner)
           }
           xCopyAMVPInfo( &amvp[eRefPicList], &aacAMVPInfo[iRefList][iRefIdxTemp]); // must always be done ( also when AMVP_MODE = AM_NONE )
 #if GDR_ENABLED
+          //xCheckBestMVP():保持MV不变，尝试AMVP的MVP候选列表中的其余MVP，是否会得到更低的RDcost
           xCheckBestMVP(pu, eRefPicList, cMvTemp[iRefList][iRefIdxTemp], cMvPred[iRefList][iRefIdxTemp], aaiMvpIdx[iRefList][iRefIdxTemp], amvp[eRefPicList], uiBitsTemp, uiCostTemp, pu.cu->imv);
 
           if (isEncodeGdrClean)
@@ -3199,7 +3240,10 @@ void InterSearch::predInterSearch(CodingUnit& cu, Partitioner& partitioner)
         ::memcpy(&(g_reusedUniMVs[idx1][idx2][idx3][idx4][0][0]), cMvTemp, 2 * 33 * sizeof(Mv));
         g_isReusedUniMVsFilled[idx1][idx2][idx3][idx4] = true;
       }
+      //以上到memcpy 都是保存cMvTemp
       //  Bi-predictive Motion estimation
+      //双向预测是禁止在4x4、4x8、8x4大小的CU块上进行。
+      //对于非low-delay帧来说，只有当不开启BCW时affine没选为最佳模式，才会测试开启BCW下的双向预测。
       if( ( cs.slice->isInterB() ) && ( PU::isBipredRestriction( pu ) == false )
         && (cu.slice->getCheckLDC() || bcwIdx == BCW_DEFAULT || !m_affineModeSelected || !m_pcEncCfg->getUseBcwFast())
         )
@@ -3230,7 +3274,9 @@ void InterSearch::predInterSearch(CodingUnit& cu, Partitioner& partitioner)
 #endif
 
         uint32_t uiMotBits[2];
-
+        //如果不令RPL1的MVD为0，这里只需要计算下双向预测花费的比特数。
+        //如果令RPL1的MVD为0，不光要计算花费的比特数，还需要获取参考帧列表为1时，
+        //AMVP的MVP直接当MV来单向预测时，最优情况下的预测值
         if(cs.picHeader->getMvdL1ZeroFlag())
         {
           xCopyAMVPInfo(&aacAMVPInfo[1][bestBiPRefIdxL1], &amvp[REF_PIC_LIST_1]);
@@ -3301,6 +3347,7 @@ void InterSearch::predInterSearch(CodingUnit& cu, Partitioner& partitioner)
         }
         else
         {
+          //只需要计算双向预测的bit
           uiMotBits[0] = uiBits[0] - uiMbBits[0];
           uiMotBits[1] = uiBits[1] - uiMbBits[1];
           uiBits[2] = uiMbBits[2] + uiMotBits[0] + uiMotBits[1];
@@ -3310,7 +3357,7 @@ void InterSearch::predInterSearch(CodingUnit& cu, Partitioner& partitioner)
         {
           // 4-times iteration (default)
           int iNumIter = 4;
-
+          //RA配置下 默认开启 所以只做一次
           // fast encoder setting: only one iteration
           if (m_pcEncCfg->getFastInterSearchMode() == FASTINTERSEARCH_MODE1
               || m_pcEncCfg->getFastInterSearchMode() == FASTINTERSEARCH_MODE2 || cs.picHeader->getMvdL1ZeroFlag())
@@ -3319,8 +3366,12 @@ void InterSearch::predInterSearch(CodingUnit& cu, Partitioner& partitioner)
           }
 
           enforceBcwPred = (bcwIdx != BCW_DEFAULT);
+          //for循环进入双向预测
           for (int iIter = 0; iIter < iNumIter; iIter++)
           {
+            //由于双向预测是固定一侧的预测值，再对另一侧进行运动搜索
+            //iRefList表示要对哪一侧的RPL进行运动搜索。这里可以看到哪一侧的RDcost更低，就固定不动
+            //开启BCW时，则是哪一侧的权重更高，就固定不动。
             int iRefList = iIter % 2;
 
             if (m_pcEncCfg->getFastInterSearchMode() == FASTINTERSEARCH_MODE1
@@ -3363,6 +3414,8 @@ void InterSearch::predInterSearch(CodingUnit& cu, Partitioner& partitioner)
             {
               iRefList = 0;
             }
+
+            //如果令RPL1的MVD为0，已经在前面获取过预测值。其余情况需要获取固定一侧的预测值
             if (iIter == 0 && !cs.picHeader->getMvdL1ZeroFlag())
             {
               pu.mv[1 - iRefList]     = cMv[1 - iRefList];
@@ -3386,8 +3439,9 @@ void InterSearch::predInterSearch(CodingUnit& cu, Partitioner& partitioner)
               eRefPicList = REF_PIC_LIST_0;
             }
 
-            bool bChanged = false;
+            bool bChanged = false;//bChanged：为true表示双向预测的最佳情况发生改动
 
+            //下面开始固定一侧的结果 遍历未固定的另一侧 进行运动搜索
             iRefStart = 0;
             iRefEnd   = cs.slice->getNumRefIdx(eRefPicList) - 1;
             for (int iRefIdxTemp = iRefStart; iRefIdxTemp <= iRefEnd; iRefIdxTemp++)
@@ -3530,7 +3584,9 @@ void InterSearch::predInterSearch(CodingUnit& cu, Partitioner& partitioner)
                 }
               }
             }   // for loop-iRefIdxTemp
-
+            //双向预测的最佳情况未发生改动时，就跳过之后的循环。
+            //改变量位于多次迭代内 ，如果连续两次迭代结果一致 说明不需要进行下一步迭代
+            //这时如果双向预测会优于单向预测，就进行xCheckBestMVP()
             if (!bChanged)
             {
 #if GDR_ENABLED
@@ -3618,7 +3674,7 @@ void InterSearch::predInterSearch(CodingUnit& cu, Partitioner& partitioner)
         }
         cu.refIdxBi[0] = iRefIdxBi[0];
         cu.refIdxBi[1] = iRefIdxBi[1];
-
+        //SMVD尝试
         if ( cs.slice->getBiDirPred() && trySmvd )
         {
           Distortion symCost;
@@ -3998,6 +4054,7 @@ void InterSearch::predInterSearch(CodingUnit& cu, Partitioner& partitioner)
         uiCostOk[1] = costValidList1Ok;
       }
 #endif
+      //开启BCW时必须强制选择双向预测
       if (cu.cs->pps->getWPBiPred() == true && tryBipred && (bcwIdx != BCW_DEFAULT))
       {
         CHECK(iRefIdxBi[0] < 0, "Invalid picture reference index");
@@ -4134,6 +4191,7 @@ void InterSearch::predInterSearch(CodingUnit& cu, Partitioner& partitioner)
       uiHevcCost = (uiCostBi <= uiCost[0] && uiCostBi <= uiCost[1])
                      ? uiCostBi
                      : ((uiCost[0] <= uiCost[1]) ? uiCost[0] : uiCost[1]);
+      //以上 设置PU和相关变量
 #if GDR_ENABLED
       if (isEncodeGdrClean)
       {
@@ -4142,6 +4200,7 @@ void InterSearch::predInterSearch(CodingUnit& cu, Partitioner& partitioner)
 #endif
     }
 
+    //下面开始使用仿射模式
     if (cu.Y().width > 8 && cu.Y().height > 8 && cu.slice->getSPS()->getUseAffine()
       && checkAffine
       && (bcwIdx == BCW_DEFAULT || m_affineModeSelected || !m_pcEncCfg->getUseBcwFast())
@@ -4203,6 +4262,7 @@ void InterSearch::predInterSearch(CodingUnit& cu, Partitioner& partitioner)
       xPredAffineInterSearch(pu, origBuf, puIdx, uiLastModeTemp, uiAffineCost, cMvHevcTemp, cMvHevcTempSolid, acMvAffine4Para, acMvAffine4ParaSolid, refIdx4Para, bcwIdx, enforceBcwPred,
         ((cu.slice->getSPS()->getUseBcw() == true) ? getWeightIdxBits(bcwIdx) : 0));
 #else
+      //仿射运动估计
       xPredAffineInterSearch(pu, origBuf, puIdx, uiLastModeTemp, uiAffineCost, cMvHevcTemp, acMvAffine4Para, refIdx4Para, bcwIdx, enforceBcwPred,
         ((cu.slice->getSPS()->getUseBcw() == true) ? getWeightIdxBits(bcwIdx) : 0));
 #endif
@@ -4258,6 +4318,7 @@ void InterSearch::predInterSearch(CodingUnit& cu, Partitioner& partitioner)
         if ( uiAffineCost < uiHevcCost * 1.05 ) ///< condition for 6 parameter affine ME
 #endif
         {
+          //如果满足条件 那么考虑六参数仿射
           // save 4 parameter results
           Mv bestMv[2][3], bestMvd[2][3];
           int bestMvpIdx[2], bestMvpNum[2], bestRefIdx[2];
@@ -4479,6 +4540,7 @@ void InterSearch::predInterSearch(CodingUnit& cu, Partitioner& partitioner)
       }
     }
 
+    //获取帧间预测最终值
     if( cu.firstPU->interDir == 3 && !cu.firstPU->mergeFlag )
     {
       if (bcwIdx != BCW_DEFAULT)
@@ -4487,12 +4549,12 @@ void InterSearch::predInterSearch(CodingUnit& cu, Partitioner& partitioner)
       }
     }
     m_maxCompIDToPred = MAX_NUM_COMPONENT;
-
+    //获取周围PU的帧间信息
     PU::spanMotionInfo(pu, mergeCtx);
 
     m_skipPROF = false;
     m_encOnly = false;
-    //  MC
+    //  MC运动补偿
     PelUnitBuf predBuf = pu.cs->getPredBuf(pu);
     if ( bcwIdx == BCW_DEFAULT || !m_affineMotion.affine4ParaAvail || !m_affineMotion.affine6ParaAvail )
     {
@@ -4577,6 +4639,7 @@ void InterSearch::xEstimateMvPredAMVP( PredictionUnit& pu, PelUnitBuf& origBuf, 
   //-- Check Minimum Cost.
   for( i = 0 ; i < pcAMVPInfo->numCand; i++)
   {
+    //计算每个MVP作为MV情况下的失真
     Distortion uiTmpCost = xGetTemplateCost( pu, origBuf, predBuf, pcAMVPInfo->mvCand[i], i, AMVP_MAX_NUM_CANDS, eRefPicList, iRefIdx );
 
 #if GDR_ENABLED
@@ -4807,7 +4870,7 @@ Distortion InterSearch::xGetTemplateCost( const PredictionUnit& pu,
 
   // prediction pattern
   const bool bi = pu.cu->slice->testWeightPred() && pu.cu->slice->getSliceType()==P_SLICE;
-
+  //根据重建像素和MV构建当前PU
   xPredInterBlk(COMPONENT_Y, pu, picRef, cMvCand, predBuf, bi, pu.cu->slice->clpRng(COMPONENT_Y), false, false);
 
   if ( bi )
@@ -4859,6 +4922,12 @@ Distortion InterSearch::xGetAffineTemplateCost( PredictionUnit& pu, PelUnitBuf& 
   return uiCost;
 }
 
+/*
+* eRefPicList 表示当前参考帧是前向参考帧还是后向参考帧
+* rcMvPred是当前参考帧通过AMVP候选列表中得到的最优的MVP，作为运动估计的起点
+* iRefIdxPred表示当前参考帧在参考帧列表中的索引
+* rcMV是运动搜索后的最佳MV
+*/
 #if GDR_ENABLED
 void InterSearch::xMotionEstimation(PredictionUnit& pu, PelUnitBuf& origBuf, RefPicList eRefPicList, Mv& rcMvPred, int iRefIdxPred, Mv& rcMv, bool &rcMvSolid, int& riMVPIdx, uint32_t& ruiBits, Distortion& ruiCost, const AMVPInfo& amvpInfo, bool& rbCleanCandExist, bool bBi)
 #else
@@ -4874,45 +4943,49 @@ void InterSearch::xMotionEstimation(PredictionUnit& pu, PelUnitBuf& origBuf, Ref
     return;
   }
 
-  Mv cMvHalf, cMvQter;
+  Mv cMvHalf, cMvQter;//1/2精度和1/4精度mv
 
   CHECK(eRefPicList >= MAX_NUM_REF_LIST_ADAPT_SR || iRefIdxPred>=int(MAX_IDX_ADAPT_SR), "Invalid reference picture list");
   m_iSearchRange = m_aaiAdaptSR[eRefPicList][iRefIdxPred];
 
-  int    iSrchRng   = (bBi ? m_bipredSearchRange : m_iSearchRange);
+  int    iSrchRng   = (bBi ? m_bipredSearchRange : m_iSearchRange);//搜索范围
   double fWeight    = 1.0;
 
   PelUnitBuf  origBufTmp = m_tmpStorageLCU.getBuf( UnitAreaRelative(*pu.cu, pu) );
-  PelUnitBuf* pBuf       = &origBuf;
+  PelUnitBuf* pBuf       = &origBuf;//当前PU的原始像素
 
   if(bBi) // Bi-predictive ME
   {
     // NOTE: Other buf contains predicted signal from another direction
+    //因为Bi是固定一个方向 对另一个方向的参考帧列表中进行搜索 所以有一个方向的预测结果存在buf中
     PelUnitBuf otherBuf = m_tmpPredStorage[1 - (int)eRefPicList].getBuf( UnitAreaRelative(*pu.cu, pu ));
     origBufTmp.copyFrom(origBuf);
+    //用另外一个方向的像素对origBuf进行高频滤波
     origBufTmp.removeHighFreq( otherBuf, m_pcEncCfg->getClipForBiPredMeEnabled(), pu.cu->slice->clpRngs()
                               ,getBcwWeight( pu.cu->BcwIdx, eRefPicList )
                               );
-    pBuf = &origBufTmp;
+    pBuf = &origBufTmp; //高频滤波后的origBuf，作为IntTZSearchStruct的标准模板像素
+
 
     fWeight = xGetMEDistortionWeight( pu.cu->BcwIdx, eRefPicList );
   }
-  m_cDistParam.isBiPred = bBi;
+  m_cDistParam.isBiPred = bBi;//是否为双向预测
 
   //  Search key pattern initialization
   CPelBuf  tmpPattern   = pBuf->Y();
-  CPelBuf* pcPatternKey = &tmpPattern;
+  CPelBuf* pcPatternKey = &tmpPattern;//原始像素作为我们要匹配的像素
 
   m_lumaClpRng = pu.cs->slice->clpRng( COMPONENT_Y );
 
   bool wrap =  pu.cu->slice->getRefPic(eRefPicList, iRefIdxPred)->isWrapAroundEnabled( pu.cs->pps );
+  //参考帧的重建像素
   CPelBuf buf = pu.cu->slice->getRefPic(eRefPicList, iRefIdxPred)->getRecoBuf(pu.blocks[COMPONENT_Y], wrap);
 
-  IntTZSearchStruct cStruct;
+  IntTZSearchStruct cStruct;//初始化搜索数据 具体含义可以查看结构体成员
   cStruct.pcPatternKey  = pcPatternKey;
   cStruct.iRefStride    = buf.stride;
   cStruct.piRefY        = buf.buf;
-  cStruct.imvShift = pu.cu->imv == IMV_HPEL ? 1 : (pu.cu->imv << 1);
+  cStruct.imvShift = pu.cu->imv == IMV_HPEL ? 1 : (pu.cu->imv << 1);//精度处理
   cStruct.useAltHpelIf = pu.cu->imv == IMV_HPEL;
   cStruct.inCtuSearch = false;
   cStruct.zeroMV = false;
@@ -4925,11 +4998,12 @@ void InterSearch::xMotionEstimation(PredictionUnit& pu, PelUnitBuf& origBuf, Ref
 
   auto blkCache = dynamic_cast<CacheBlkInfoCtrl*>( m_modeCtrl );
 
-  bool bQTBTMV  = false;
+  bool bQTBTMV  = false;//一直都是false？
   bool bQTBTMV2 = false;
   Mv cIntMv;
   if( !bBi )
   {
+    //如果单向 ，MV可以用 bQTBTMV2=True
     bool bValid = blkCache && blkCache->getMv( pu, eRefPicList, iRefIdxPred, cIntMv );
     if( bValid )
     {
@@ -4951,19 +5025,21 @@ void InterSearch::xMotionEstimation(PredictionUnit& pu, PelUnitBuf& origBuf, Ref
   m_currRefPicIndex = iRefIdxPred;
   m_skipFracME = false;
   //  Do integer search
-  if( ( m_motionEstimationSearchMethod == MESEARCH_FULL ) || bBi || bQTBTMV )
+  if( ( m_motionEstimationSearchMethod == MESEARCH_FULL ) || bBi || bQTBTMV )//全搜索
   {
     cStruct.subShiftMode = m_pcEncCfg->getFastInterSearchMode() == FASTINTERSEARCH_MODE1 || m_pcEncCfg->getFastInterSearchMode() == FASTINTERSEARCH_MODE3 ? 2 : 0;
     m_pcRdCost->setDistParam(m_cDistParam, *cStruct.pcPatternKey, cStruct.piRefY, cStruct.iRefStride, m_lumaClpRng.bd, COMPONENT_Y, cStruct.subShiftMode);
 
-    Mv bestInitMv = (bBi ? rcMv : rcMvPred);
+    Mv bestInitMv = (bBi ? rcMv : rcMvPred);//如果是单向的话 那么初始位置为AMVP最佳位置
     Mv cTmpMv = bestInitMv;
 
     clipMv( cTmpMv, pu.cu->lumaPos(), pu.cu->lumaSize(), *pu.cs->sps, *pu.cs->pps );
     cTmpMv.changePrecision(MV_PRECISION_INTERNAL, MV_PRECISION_INT);
+    //移动到搜索起始点buffer
     m_cDistParam.cur.buf = cStruct.piRefY + (cTmpMv.ver * cStruct.iRefStride) + cTmpMv.hor;
     Distortion uiBestSad = m_cDistParam.distFunc(m_cDistParam);
     uiBestSad += m_pcRdCost->getCostOfVectorWithPredictor(cTmpMv.hor, cTmpMv.ver, cStruct.imvShift);
+    //类似去重？
 
     for (int i = 0; i < m_uniMvListSize; i++)
     {
@@ -5003,12 +5079,12 @@ void InterSearch::xMotionEstimation(PredictionUnit& pu, PelUnitBuf& origBuf, Ref
 #if GDR_ENABLED
       xSetSearchRange(pu, bestInitMv, iSrchRng, cStruct.searchRange, cStruct, eRefPicList, iRefIdxPred);
 #else
-      xSetSearchRange(pu, bestInitMv, iSrchRng, cStruct.searchRange, cStruct);
+      xSetSearchRange(pu, bestInitMv, iSrchRng, cStruct.searchRange, cStruct);//设置搜索范围
 #endif
     }
-    xPatternSearch( cStruct, rcMv, ruiCost);
+    xPatternSearch( cStruct, rcMv, ruiCost);//在索搜索范围内需找最佳iMV
   }
-  else if( bQTBTMV2 )
+  else if( bQTBTMV2 )//第二次搜索使用TZsearch
   {
     rcMv = cIntMv;
 
@@ -5018,10 +5094,14 @@ void InterSearch::xMotionEstimation(PredictionUnit& pu, PelUnitBuf& origBuf, Ref
   }
   else
   {
+    //第一次 使用fast全搜索
+     //搜索模式不同，subShiftMode不同，MESEARCH_SELECTIVE选择搜索可减少复杂性，通过亚采样像素匹配搜索
+    //取值为 1 2 0
     cStruct.subShiftMode = ( !m_pcEncCfg->getRestrictMESampling() && m_pcEncCfg->getMotionEstimationSearchMethod() == MESEARCH_SELECTIVE ) ? 1 :
                             ( m_pcEncCfg->getFastInterSearchMode() == FASTINTERSEARCH_MODE1 || m_pcEncCfg->getFastInterSearchMode() == FASTINTERSEARCH_MODE3 ) ? 2 : 0;
     rcMv = rcMvPred;
     const Mv *pIntegerMv2Nx2NPred = 0;
+    //快速搜索匹配，以AMVP最优的预测MV为起点，得到整数mv
     xPatternSearchFast(pu, eRefPicList, iRefIdxPred, cStruct, rcMv, ruiCost, pIntegerMv2Nx2NPred);
     if( blkCache )
     {
@@ -5034,7 +5114,7 @@ void InterSearch::xMotionEstimation(PredictionUnit& pu, PelUnitBuf& origBuf, Ref
   }
 
   DTRACE( g_trace_ctx, D_ME, "%d %d %d :MECostFPel<L%d,%d>: %d,%d,%dx%d, %d", DTRACE_GET_COUNTER( g_trace_ctx, D_ME ), pu.cu->slice->getPOC(), 0, ( int ) eRefPicList, ( int ) bBi, pu.Y().x, pu.Y().y, pu.Y().width, pu.Y().height, ruiCost );
-  // sub-pel refinement for sub-pel resolution
+  // sub-pel refinement for sub-pel resolution  用于亚像素分辨率的亚像素细化
   if ( pu.cu->imv == 0 || pu.cu->imv == IMV_HPEL )
   {
     if( m_pcEncCfg->getMCTSEncConstraint() )
@@ -5053,18 +5133,19 @@ void InterSearch::xMotionEstimation(PredictionUnit& pu, PelUnitBuf& origBuf, Ref
 #if GDR_ENABLED
     xPatternSearchFracDIF(pu, eRefPicList, iRefIdxPred, cStruct, rcMv, cMvHalf, cMvQter, ruiCost, rbCleanCandExist);
 #else
+    // 亚像素搜索。插值，搜索匹配，基于整数mv得到半像素和1/4像素mv
     xPatternSearchFracDIF( pu, eRefPicList, iRefIdxPred, cStruct, rcMv, cMvHalf, cMvQter, ruiCost );
 #endif
     m_pcRdCost->setCostScale( 0 );
     rcMv <<= 2;
     rcMv  += ( cMvHalf <<= 1 );
-    rcMv  += cMvQter;
+    rcMv  += cMvQter;//最终得到1/4像素精度的mv
     uint32_t uiMvBits = m_pcRdCost->getBitsOfVectorWithPredictor( rcMv.getHor(), rcMv.getVer(), cStruct.imvShift );
     ruiBits += uiMvBits;
     ruiCost = ( Distortion ) ( floor( fWeight * ( ( double ) ruiCost - ( double ) m_pcRdCost->getCost( uiMvBits ) ) ) + ( double ) m_pcRdCost->getCost( ruiBits ) );
     rcMv.changePrecision(MV_PRECISION_QUARTER, MV_PRECISION_INTERNAL);
   }
-  else // integer refinement for integer-pel and 4-pel resolution
+  else // integer refinement for integer-pel and 4-pel resolution整数像素和4像素分辨率的整数细化
   {
     rcMv.changePrecision(MV_PRECISION_INT, MV_PRECISION_INTERNAL);
 #if GDR_ENABLED
@@ -5316,7 +5397,7 @@ void InterSearch::xTZSearch( const PredictionUnit& pu,
     clipMv( rcMv, pu.cu->lumaPos(), pu.cu->lumaSize(), *pu.cs->sps, *pu.cs->pps );
   }
   rcMv.changePrecision(MV_PRECISION_INTERNAL, MV_PRECISION_QUARTER);
-  rcMv.divideByPowerOf2(2);
+  rcMv.divideByPowerOf2(2);//rcMv右移两位
 
   // init TZSearchStruct
   cStruct.uiBestSad = std::numeric_limits<Distortion>::max();
@@ -5327,11 +5408,11 @@ void InterSearch::xTZSearch( const PredictionUnit& pu,
 
   // distortion
 
+  //xTZSearchHelp进行像素匹配，计算相邻重建帧搜索点的像素和当前块原始像素的SAD，从而存储最优搜索点
+  // set rcMv (Median predictor) as start point and as best point 设置rcMv作为搜索起始点和最佳点
+  xTZSearchHelp( cStruct, rcMv.getHor(), rcMv.getVer(), 0, 0 );//检查rcMV的匹配
 
-  // set rcMv (Median predictor) as start point and as best point
-  xTZSearchHelp( cStruct, rcMv.getHor(), rcMv.getVer(), 0, 0 );
-
-  // test whether zero Mv is better start point than Median predictor
+  // test whether zero Mv is better start point than Median predictor测试0MV是否比初始MV好
   if ( bTestZeroVector )
   {
     if ((rcMv.getHor() != 0 || rcMv.getVer() != 0) &&
@@ -5344,7 +5425,7 @@ void InterSearch::xTZSearch( const PredictionUnit& pu,
 
   SearchRange& sr = cStruct.searchRange;
 
-  if (pIntegerMv2Nx2NPred != 0)
+  if (pIntegerMv2Nx2NPred != 0) //一般为0	测试pIntegerMv2Nx2NPred点的匹配
   {
     Mv integerMv2Nx2NPred = *pIntegerMv2Nx2NPred;
     integerMv2Nx2NPred.changePrecision(MV_PRECISION_INT, MV_PRECISION_INTERNAL);
@@ -5443,6 +5524,7 @@ void InterSearch::xTZSearch( const PredictionUnit& pu,
     xSetSearchRange(pu, currBestMv, m_iSearchRange >> (bFastSettings ? 1 : 0), sr, cStruct);
 #endif
   }
+  //使用hash运动估计 
   if (m_pcEncCfg->getUseHashME() && (m_currRefPicList == 0 || pu.cu->slice->getList1IdxToList0Idx(m_currRefPicIndex) < 0))
   {
     int minSize = min(pu.cu->lumaSize().width, pu.cu->lumaSize().height);
@@ -5473,6 +5555,8 @@ void InterSearch::xTZSearch( const PredictionUnit& pu,
 
   // first search around best position up to now.
   // The following works as a "subsampled/log" window search around the best candidate
+  //第一次围绕起点进行菱形或者正方形搜索，以步长为2的整数次幂进行递增，iDst为搜索步长
+  /*=====================以上面得到的起点为搜索起点，进行搜索=====================*/
   for ( iDist = 1; iDist <= iSearchRange; iDist*=2 )
   {
     if ( bFirstSearchDiamond == 1 )
@@ -5486,11 +5570,11 @@ void InterSearch::xTZSearch( const PredictionUnit& pu,
 
     if ( bFirstSearchStop && ( cStruct.uiBestRound >= uiFirstSearchRounds ) ) // stop criterion
     {
-      break;
+      break;//相同结果 次数大于3/2 停止迭代
     }
   }
-
-  if (!bNewZeroNeighbourhoodTest)
+  /*=======================以0 MV作为搜索起点，进行搜索================*/
+  if (!bNewZeroNeighbourhoodTest)//一般为false
   {
     // test whether zero Mv is a better start point than Median predictor
     if ( bTestZeroVectorStart && ((cStruct.iBestX != 0) || (cStruct.iBestY != 0)) )
@@ -5516,9 +5600,11 @@ void InterSearch::xTZSearch( const PredictionUnit& pu,
     // It was reported that the original (above) search scheme using bTestZeroVectorStart did not
     // make sense since one would have already checked the zero candidate earlier
     // and thus the conditions for that test would have not been satisfied
-    if (bTestZeroVectorStart == true && bBestCandidateZero != true)
+    //检查0MV的情况有时不会发生 因为存在检测过 但是并不满足条件的情况
+    //所以 加入0MV附近 搜索范围减半的情况
+    if (bTestZeroVectorStart == true && bBestCandidateZero != true)//检查0点，必须满足之前的菱形搜索最优点不为0
     {
-      for ( iDist = 1; iDist <= (iSearchRange >> 1); iDist*=2 )
+      for ( iDist = 1; iDist <= (iSearchRange >> 1); iDist*=2 )//以0点为起点，搜索范围减半
       {
         xTZ8PointDiamondSearch( cStruct, 0, 0, iDist, false );
         if ( bTestZeroVectorStop && (cStruct.uiBestRound > 2) ) // stop criterion
@@ -5530,6 +5616,7 @@ void InterSearch::xTZSearch( const PredictionUnit& pu,
   }
 
   // calculate only 2 missing points instead 8 points if cStruct.uiBestDistance == 1
+  //第一次结果的最优搜索步长为1时进行两点搜索
   if ( cStruct.uiBestDistance == 1 )
   {
     cStruct.uiBestDistance = 0;
@@ -5537,12 +5624,14 @@ void InterSearch::xTZSearch( const PredictionUnit& pu,
   }
 
   // raster search if distance is too big
+  //步长过大 进行一定区域的全搜索
   if (bUseAdaptiveRaster)
   {
+    //如果使用自适应步长决策
     int iWindowSize     = iRaster;
     SearchRange localsr = sr;
 
-    if (!(bEnableRasterSearch && ( ((int)(cStruct.uiBestDistance) >= iRaster))))
+    if (!(bEnableRasterSearch && ( ((int)(cStruct.uiBestDistance) >= iRaster))))//步长没有大于阈值，缩小搜索范围全搜索一次
     {
       iWindowSize ++;
       localsr.left   /= 2;
@@ -5551,7 +5640,7 @@ void InterSearch::xTZSearch( const PredictionUnit& pu,
       localsr.bottom /= 2;
     }
     cStruct.uiBestDistance = iWindowSize;
-    for ( iStartY = localsr.top; iStartY <= localsr.bottom; iStartY += iWindowSize )
+    for ( iStartY = localsr.top; iStartY <= localsr.bottom; iStartY += iWindowSize )//搜索范围localsr内全搜索
     {
       for ( iStartX = localsr.left; iStartX <= localsr.right; iStartX += iWindowSize )
       {
@@ -5561,6 +5650,7 @@ void InterSearch::xTZSearch( const PredictionUnit& pu,
   }
   else
   {
+    //第一次获得的最优搜索步长太大时，进行一定区域的全搜索
     if ( bEnableRasterSearch && ( ((int)(cStruct.uiBestDistance) >= iRaster) || bAlwaysRasterSearch ) )
     {
       cStruct.uiBestDistance = iRaster;
@@ -5574,13 +5664,15 @@ void InterSearch::xTZSearch( const PredictionUnit& pu,
     }
   }
 
-  // raster refinement
+  // raster refinement光栅细化 细化搜索
 
-  if ( bRasterRefinementEnable && cStruct.uiBestDistance > 0 )
+  if ( bRasterRefinementEnable && cStruct.uiBestDistance > 0 )//bRasterRefinementEnable通常为false
   {
     while ( cStruct.uiBestDistance > 0 )
     {
-      iStartX = cStruct.iBestX;
+      //while循环内重复进行以选出的最优点为起点的菱形搜索和两点搜索
+      //直到菱形搜索得到的最优点和起始搜索点相同，那么这个点就是最优匹配点了
+      iStartX = cStruct.iBestX;//以上次得到的最佳匹配点为起始点
       iStartY = cStruct.iBestY;
       if ( cStruct.uiBestDistance > 1 )
       {
@@ -5596,7 +5688,7 @@ void InterSearch::xTZSearch( const PredictionUnit& pu,
       }
 
       // calculate only 2 missing points instead 8 points if cStruct.uiBestDistance == 1
-      if ( cStruct.uiBestDistance == 1 )
+      if ( cStruct.uiBestDistance == 1 )//得到的最优点的搜索步长为1时，进行两点搜索
       {
         cStruct.uiBestDistance = 0;
         if ( cStruct.ucPointNr != 0 )

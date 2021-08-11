@@ -1770,11 +1770,13 @@ void EncGOP::xPicInitHashME( Picture *pic, const PPS *pps, PicList &rcListPic )
           int blockSize = 4;
           int allNum = 0;
           int simpleNum = 0;
+          //先固定j j是纵轴坐标
           for (int j = 0; j <= picHeight - blockSize; j += blockSize)
           {
             for (int i = 0; i <= picWidth - blockSize; i += blockSize)
             {
               Pel* curBlock = picSrc + j * stridePic + i;
+              //检测是否水平上均值
               bool isHorSame = true;
               for (int m = 0; m < blockSize&&isHorSame; m++)
               {
@@ -1786,6 +1788,7 @@ void EncGOP::xPicInitHashME( Picture *pic, const PPS *pps, PicList &rcListPic )
                   }
                 }
               }
+              //竖直是否均值
               bool isVerSame = true;
               for (int m = 1; m < blockSize&&isVerSame; m++)
               {
@@ -1804,7 +1807,8 @@ void EncGOP::xPicInitHashME( Picture *pic, const PPS *pps, PicList &rcListPic )
               }
             }
           }
-
+          //如果简单块个数比较少，不使用Hash搜索
+          //也就是非屏幕内容帧
           if (simpleNum < 0.3*allNum)
           {
             m_pcCfg->setUseHashME(false);
@@ -2091,7 +2095,7 @@ void EncGOP::compressGOP( int iPOCLast, int iNumPicRcvd, PicList& rcListPic,
                           const bool printFrameMSE, const bool printMSSSIM, bool isEncodeLtRef, const int picIdInGOP)
 {
   // TODO: Split this function up.
-
+  //此函数涉及到网络适配层很多东西 暂时看不懂
   Picture*        pcPic = NULL;
   PicHeader*      picHeader = NULL;
   Slice*      pcSlice;
@@ -2250,7 +2254,7 @@ void EncGOP::compressGOP( int iPOCLast, int iNumPicRcvd, PicList& rcListPic,
     {
       pcSlice->setSliceType(B_SLICE);
     }
-
+    //GDR?是否就是HEVC中的IDR？
     // note : first picture is GDR(I_SLICE)
     if (pocCurr == 0)
     {
@@ -2288,7 +2292,7 @@ void EncGOP::compressGOP( int iPOCLast, int iNumPicRcvd, PicList& rcListPic,
       pcSlice->setAssociatedIRAPType(m_associatedIRAPType[pcPic->layerId]);
       pcSlice->setAssociatedIRAPPOC(m_associatedIRAPPOC[pcPic->layerId]);
     }
-
+    //如果是Clean Random Access帧，那么可以参考上一个GOP的帧
     pcSlice->decodingRefreshMarking(m_pocCRA, m_bRefreshPending, rcListPic, m_pcCfg->getEfficientFieldIRAPEnabled());
     if (m_pcCfg->getUseCompositeRef() && isEncodeLtRef)
     {
@@ -2525,9 +2529,9 @@ void EncGOP::compressGOP( int iPOCLast, int iNumPicRcvd, PicList& rcListPic,
     {
       CU::checkConformanceILRP(pcSlice);
     }
-
+    //初始化hash运动估计 计算各个位置的hash值
     xPicInitHashME( pcPic, pcSlice->getPPS(), rcListPic );
-
+    //下面是从cfg中读取参数设置编码中的尺寸限制等
     if( m_pcCfg->getUseAMaxBT() )
     {
       if (!pcSlice->isIRAP())
@@ -2699,6 +2703,7 @@ void EncGOP::compressGOP( int iPOCLast, int iNumPicRcvd, PicList& rcListPic,
     }
 
     // disable TMVP when current picture is the only ref picture
+    //如果是IRAP并且使用了IBC 那么禁用时域MVP技术 
     if (pcSlice->isIRAP() && pcSlice->getSPS()->getIBCFlag())
     {
       picHeader->setEnableTMVPFlag(0);
@@ -2895,7 +2900,7 @@ void EncGOP::compressGOP( int iPOCLast, int iNumPicRcvd, PicList& rcListPic,
     int actualTotalBits      = 0;
     int estimatedBits        = 0;
     int tmpBitsBeforeWriting = 0;
-
+    //码率控制初始化
     xPicInitRateControl(estimatedBits, iGOPid, lambda, pcPic, pcSlice);
 
     uint32_t uiNumSliceSegments = 1;
@@ -2956,7 +2961,7 @@ void EncGOP::compressGOP( int iPOCLast, int iNumPicRcvd, PicList& rcListPic,
       }
       m_pcSliceEncoder->setUpLambda(pcSlice, pcSlice->getLambdas()[0], pcSlice->getSliceQp());
     }
-
+    //LMCS滤波技术 位于所有环路滤波之前
     xPicInitLMCS(pcPic, picHeader, pcSlice);
 
     if( pcSlice->getSPS()->getScalingListFlag() && m_pcCfg->getUseScalingListId() == SCALING_LIST_FILE_READ )
@@ -3116,7 +3121,7 @@ void EncGOP::compressGOP( int iPOCLast, int iNumPicRcvd, PicList& rcListPic,
           clipMv = clipMvInPic;
           m_pcEncLib->getInterSearch()->setClipMvInSubPic(false);
         }
-
+        //Slice编码入口函数
         m_pcSliceEncoder->precompressSlice( pcPic );
         m_pcSliceEncoder->compressSlice   ( pcPic, false, false );
 
@@ -3877,7 +3882,7 @@ void EncGOP::compressGOP( int iPOCLast, int iNumPicRcvd, PicList& rcListPic,
       }
 
       m_pcCfg->setEncodedFlag(iGOPid, true);
-
+      //编码结束后计算PSNR
       double PSNR_Y;
       xCalculateAddPSNRs(isField, isTff, iGOPid, pcPic, accessUnit, rcListPic, encTime, snr_conversion,
         printFrameMSE, printMSSSIM, &PSNR_Y, isEncodeLtRef );

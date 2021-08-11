@@ -1552,6 +1552,7 @@ void EncSlice::compressSlice( Picture* pcPic, const bool bCompressEntireSlice, c
   m_pcInterSearch->resetAffineMVList();
   m_pcInterSearch->resetUniMvList();
   ::memset(g_isReusedUniMVsFilled, 0, sizeof(g_isReusedUniMVsFilled));
+  //CTU入口函数
   encodeCtus( pcPic, bCompressEntireSlice, bFastDeltaQP, m_pcLib );
   if (checkPLTRatio)
   {
@@ -1871,6 +1872,7 @@ void EncSlice::encodeCtus( Picture* pcPic, const bool bCompressEntireSlice, cons
 
     if (pCfg->getSwitchPOC() != pcPic->poc || ctuRsAddr >= pCfg->getDebugCTU())
     {
+      //CTU编码入口
       m_pcCuEncoder->compressCtu(cs, ctuArea, ctuRsAddr, prevQP, currQP);
     }
 #if K0149_BLOCK_STATISTICS
