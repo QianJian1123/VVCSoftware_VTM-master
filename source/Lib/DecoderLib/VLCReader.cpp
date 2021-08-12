@@ -878,7 +878,7 @@ void HLSyntaxReader::parsePPS( PPS* pcPPS )
   xReadRbspTrailingBits();
 }
 
-void HLSyntaxReader::parseAPS( APS* aps )
+void HLSyntaxReader::parseAPS( APS* aps )//解析亮度分量和色度分量的ALF Flag、滤波器个数以及每个class对应的FilterIdx
 {
 #if ENABLE_TRACING
   xTraceAPSHeader();
@@ -893,7 +893,7 @@ void HLSyntaxReader::parseAPS( APS* aps )
   uint32_t codeApsChromaPresentFlag;
   READ_FLAG(codeApsChromaPresentFlag, "aps_chroma_present_flag");
   aps->chromaPresentFlag = codeApsChromaPresentFlag;
-
+ 
   const ApsType apsType = aps->getAPSType();
 
   if (apsType == ALF_APS)
@@ -922,13 +922,14 @@ void HLSyntaxReader::parseAPS( APS* aps )
 void HLSyntaxReader::parseAlfAps( APS* aps )
 {
   uint32_t  code;
-
+  //获取ALF相关的参数
   AlfParam param = aps->getAlfAPSParam();
   param.reset();
-  param.enabledFlag[COMPONENT_Y] = param.enabledFlag[COMPONENT_Cb] = param.enabledFlag[COMPONENT_Cr] = true;
+  param.enabledFlag[COMPONENT_Y] = param.enabledFlag[COMPONENT_Cb] = param.enabledFlag[COMPONENT_Cr] = true;//各个分量是否ALF的标志
+  //解析亮度FLAG
   READ_FLAG(code, "alf_luma_new_filter");
   param.newFilterFlag[CHANNEL_TYPE_LUMA] = code;
-
+  //解析色度flag
   if (aps->chromaPresentFlag)
   {
     READ_FLAG(code, "alf_chroma_new_filter");
@@ -938,7 +939,8 @@ void HLSyntaxReader::parseAlfAps( APS* aps )
   {
     param.newFilterFlag[CHANNEL_TYPE_CHROMA] = 0;
   }
-
+  //解析滤波器参数
+  //CCALF的参数
   CcAlfFilterParam ccAlfParam = aps->getCcAlfAPSParam();
   if (aps->chromaPresentFlag)
   {
@@ -962,7 +964,7 @@ void HLSyntaxReader::parseAlfAps( APS* aps )
           && ccAlfParam.newCcAlfFilter[COMPONENT_Cb - 1] == 0 && ccAlfParam.newCcAlfFilter[COMPONENT_Cr - 1] == 0,
         "bitstream conformance error: one of alf_luma_filter_signal_flag, alf_chroma_filter_signal_flag, "
         "alf_cross_component_cb_filter_signal_flag, and alf_cross_component_cr_filter_signal_flag shall be nonzero");
-
+  //解析亮度的参数入口
   if (param.newFilterFlag[CHANNEL_TYPE_LUMA])
   {
     READ_FLAG(code, "alf_luma_clip");
@@ -982,6 +984,7 @@ void HLSyntaxReader::parseAlfAps( APS* aps )
     {
       memset(param.filterCoeffDeltaIdx, 0, sizeof(param.filterCoeffDeltaIdx));
     }
+    //解析滤波器参数的主体函数，解析亮度分量的滤波器参数
     alfFilter( param, false, 0 );
   }
   if (param.newFilterFlag[CHANNEL_TYPE_CHROMA])
@@ -995,14 +998,14 @@ void HLSyntaxReader::parseAlfAps( APS* aps )
       code = 0;
 
     param.numAlternativesChroma = code + 1;
-
+    //解析滤波器参数的主体函数，解析色度分量的滤波器参数
     for( int altIdx=0; altIdx < param.numAlternativesChroma; ++altIdx )
     {
       alfFilter( param, true, altIdx );
     }
   }
 
-  for (int ccIdx = 0; ccIdx < 2; ccIdx++)
+  for (int ccIdx = 0; ccIdx < 2; ccIdx++)//解析参数
   {
     if (ccAlfParam.newCcAlfFilter[ccIdx])
     {
@@ -1023,6 +1026,7 @@ void HLSyntaxReader::parseAlfAps( APS* aps )
 
         short *coeff = ccAlfParam.ccAlfCoeff[ccIdx][filterIdx];
         // Filter coefficients
+        //解析滤波器参数
         for (int i = 0; i < alfShape.numCoeff - 1; i++)
         {
           READ_CODE(CCALF_BITS_PER_COEFF_LEVEL, code,
@@ -1046,13 +1050,14 @@ void HLSyntaxReader::parseAlfAps( APS* aps )
         }
         DTRACE(g_trace_ctx, D_SYNTAX, "\n");
       }
-
+      //设置
       for (int filterIdx = ccAlfParam.ccAlfFilterCount[ccIdx]; filterIdx < MAX_NUM_CC_ALF_FILTERS; filterIdx++)
       {
         ccAlfParam.ccAlfFilterIdxEnabled[ccIdx][filterIdx] = false;
       }
     }
   }
+  //解析之后设置参数
   aps->setCcAlfAPSParam(ccAlfParam);
 
   aps->setAlfAPSParam(param);

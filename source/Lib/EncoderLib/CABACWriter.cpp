@@ -155,23 +155,33 @@ void CABACWriter::end_of_slice()
 //  clause 7.3.8.2
 //--------------------------------------------------------------------------------
 //    bool  coding_tree_unit( cs, area, qp, ctuRsAddr, skipSao, skipAlf )
-//================================================================================
+//    初始化CTU，对亮度和色度的qp一起进行coding_tree，递归调用自身进行划分
+//    coding_tree_unit函数进行一个CTU的信息的编码，将CTU的信息编码为二进制码。
+        //coding_tree_unit函数在两个地方会被调用：
+        //      第一个地方是EncSlice::encodeCtus，这里调用coding_tree_unit仅仅是为了更新各个上下文模型的参数，并没有真的编码传输；
+        //第二个地方是EncSlice::encodeSlice，这里是真正的编码端将CTU信息编码为二进制码流的地方。
+        //      入口参数cs是picture即当前帧的cs，该cs.area为整个picture的区域大小，cs中包含有当前帧所有CTU的所有信息。 EncSlice::
+        //encodeCtus中调用该函数时skipSao为true，需要进行SAO。 EncSlice::encodeSlice真正编码时的skipSao为false，无需SAO滤波。
+
+      //================================================================================
 
 void CABACWriter::coding_tree_unit( CodingStructure& cs, const UnitArea& area, int (&qps)[2], unsigned ctuRsAddr, bool skipSao /* = false */, bool skipAlf /* = false */ )
 {
-  CUCtx cuCtx( qps[CH_L] );
-  QTBTPartitioner partitioner;
+  //初始化上下文、划分
+  CUCtx cuCtx( qps[CH_L] );//用prevLumaQP初始化CU上下文模型类
+  QTBTPartitioner partitioner;//定义划分类实例
 
-  partitioner.initCtu(area, CH_L, *cs.slice);
-
-  if( !skipSao )
+  partitioner.initCtu(area, CH_L, *cs.slice);//partitioner用来记录CTU到各个cu的划分路径
+  //SAO与ALF参数编码
+  //SAO编码 有关SAO的语法元素解码，具体参考JVET-S2001 7.3.11.3 P113
+  if( !skipSao ) 
   {
     sao( *cs.slice, ctuRsAddr );
   }
-
-  if (!skipAlf)
+  //ALF参数编码
+  if (!skipAlf) 
   {
-    for (int compIdx = 0; compIdx < MAX_NUM_COMPONENT; compIdx++)
+    for (int compIdx = 0; compIdx < MAX_NUM_COMPONENT; compIdx++) //Y、Cb、Cr
     {
       codeAlfCtuEnableFlag(cs, ctuRsAddr, compIdx, NULL);
       if (isLuma(ComponentID(compIdx)))
@@ -188,10 +198,10 @@ void CABACWriter::coding_tree_unit( CodingStructure& cs, const UnitArea& area, i
       }
     }
   }
-
+  // CCALF
   if ( !skipAlf )
   {
-    for ( int compIdx = 1; compIdx < getNumberValidComponents( cs.pcv->chrFormat ); compIdx++ )
+    for ( int compIdx = 1; compIdx < getNumberValidComponents( cs.pcv->chrFormat ); compIdx++ ) //Y、Cb、Cr
     {
       if (cs.slice->m_ccAlfFilterParam.ccAlfFilterEnabled[compIdx - 1])
       {
@@ -206,25 +216,30 @@ void CABACWriter::coding_tree_unit( CodingStructure& cs, const UnitArea& area, i
       }
     }
   }
-
-  if ( CS::isDualITree(cs) && cs.pcv->chrFormat != CHROMA_400 && cs.pcv->maxCUWidth > 64 )
+  //CU参数编码
+  if ( CS::isDualITree(cs) && cs.pcv->chrFormat != CHROMA_400 && cs.pcv->maxCUWidth > 64 ) 
+    //对CU宽度大于64的进行编码，该情况下划分亮度与色度保留相同划分
+  //此条件时，在QT时要对亮度和色度统一进行，保持QT对两者划分一致  
   {
-    CUCtx chromaCuCtx(qps[CH_C]);
-    QTBTPartitioner chromaPartitioner;
-    chromaPartitioner.initCtu(area, CH_C, *cs.slice);
-    coding_tree(cs, partitioner, cuCtx, &chromaPartitioner, &chromaCuCtx);
-    qps[CH_L] = cuCtx.qp;
-    qps[CH_C] = chromaCuCtx.qp;
+    CUCtx chromaCuCtx(qps[CH_C]);//用prevChromaQP初始化色度的CU上下文模型类
+    QTBTPartitioner chromaPartitioner;//定义色度的划分类实例
+    chromaPartitioner.initCtu(area, CH_C, *cs.slice);//将partitioner变为色度的划分类实例
+    coding_tree(cs, partitioner, cuCtx, &chromaPartitioner, &chromaCuCtx);//此时，coding_tree函数既传入了亮度partitioner，又有色度chromaPartitioner
+                                                                           // I帧DualITree，且CTU为128x128时的编码，亮度色度只用一个coding_tree()
+                                                                              //具体参考JVET-S2001 7.3.11.4 P114
+    qps[CH_L] = cuCtx.qp;           //更新prevLumaQP          
+    qps[CH_C] = chromaCuCtx.qp;     //更新prevChromaQP
   }
-  else
-  {
-    coding_tree(cs, partitioner, cuCtx);
+  else //P/B帧、I帧非DualITree、I帧CTU为64x64     具体参考JVET-S2001 7.3.11.4 P114
+  { 
+    // I帧DualITree，且CTU大小为64x64时，亮度和色度的划分树可以完全无关
+    coding_tree(cs, partitioner, cuCtx);//Y分量
     qps[CH_L] = cuCtx.qp;
-    if( CS::isDualITree( cs ) && cs.pcv->chrFormat != CHROMA_400 )
+    if( CS::isDualITree( cs ) && cs.pcv->chrFormat != CHROMA_400 )//如果当前slice是I slice，且开启dual tree，且色度采样格式不是4:0:0
     {
       CUCtx cuCtxChroma( qps[CH_C] );
       partitioner.initCtu(area, CH_C, *cs.slice);
-      coding_tree(cs, partitioner, cuCtxChroma);
+      coding_tree(cs, partitioner, cuCtxChroma);//I帧DualITree且CTU大小为64x64时，色度域的coding //具体参考JVET-S2001 7.3.11.4 P114
       qps[CH_C] = cuCtxChroma.qp;
     }
   }
@@ -393,12 +408,24 @@ void CABACWriter::sao_offset_pars( const SAOOffset& ctbPars, ComponentID compID,
 //    void  split_cu_mode_mt  ( split, cs, partitioner )
 //================================================================================
 
+/*注解
+      coding_tree递归调用，按照ctu在xCompressCU中得到的划分树，寻址到ctu中的每个cu，对于每个cu，调用coding_unit函数进行编码。
+      对与>64的DualITree块，在QT时要对亮度和色度统一进行，保持QT对亮度和色度划分一致。
+      对于>64的DualITree块，本函数入口参数既有亮度partitioner，又有色度chromaPartitioner。
+      对与《64的DualITree块，则分开划分。
+*/
+//编码树：主要用来编码划分信息，划分完毕后会调用coding_unit
 void CABACWriter::coding_tree(const CodingStructure& cs, Partitioner& partitioner, CUCtx& cuCtx, Partitioner* pPartitionerChroma, CUCtx* pCuCtxChroma)
 {
-  const PPS      &pps         = *cs.pps;
-  const UnitArea &currArea    = partitioner.currArea();
-  const CodingUnit &cu        = *cs.getCU( currArea.blocks[partitioner.chType], partitioner.chType );
-
+  const PPS      &pps         = *cs.pps;//当前引用的PPS
+  const UnitArea &currArea    = partitioner.currArea();//当前处理的区域
+  const CodingUnit &cu        = *cs.getCU( currArea.blocks[partitioner.chType], partitioner.chType );//当前处理的CU
+  // deltaQP相关设置 等预备步骤
+  /*
+    第一个if分支:当开启delta QP，且当前的划分区域能开启QG(quantization group)，且当前不是色度划分时重置CU上下文类实例里面的qgStart和isDQPCoded
+    第二个if分支:当开启ChromaQPAdjustemt，且当前的划分区域能开启Chroma QG，重置CU上下文类实例里面的isChromaQpAdjCoded和cs里面的chromaQpAdj
+    如果同时有亮度和色度的CU上下文类实例，则要对色度再来一遍上面两个分支
+  */
   // Reset delta QP coding flag and ChromaQPAdjustemt coding flag
   //Note: do not reset qg at chroma CU
   if( pps.getUseDQP() && partitioner.currQgEnable() && !isChroma( partitioner.chType ) )
@@ -423,59 +450,65 @@ void CABACWriter::coding_tree(const CodingStructure& cs, Partitioner& partitione
       pCuCtxChroma->isChromaQpAdjCoded = false;
     }
   }
-
+  //获取划分模式
   const PartSplit splitMode = CU::getSplitAtDepth( cu, partitioner.currDepth );
-
+  //编码划分模式
   split_cu_mode( splitMode, cs, partitioner );
-
+  //用来判断能否进行五种划分和能否不划分，具体可以参考JVET-S2001 7.4.12.4小节的开头，在split_cu_mode()函数里有调用。
   CHECK( !partitioner.canSplit( splitMode, cs ), "The chosen split mode is invalid!" );
-
+  //如果还要继续划分,最后会return
   if( splitMode != CU_DONT_SPLIT )
   {
     if (CS::isDualITree(cs) && pPartitionerChroma != nullptr
         && (partitioner.currArea().lwidth() >= 64 || partitioner.currArea().lheight() >= 64))
-    {
-      partitioner.splitCurrArea(CU_QUAD_SPLIT, cs);
-      pPartitionerChroma->splitCurrArea(CU_QUAD_SPLIT, cs);
+      //长宽有一个大于64
+      
+    {//进行四叉树划分
+      partitioner.splitCurrArea(CU_QUAD_SPLIT, cs);//在划分类中加入一次四叉树划分
+      pPartitionerChroma->splitCurrArea(CU_QUAD_SPLIT, cs);//在色度划分类中加入一次四叉树划分
       bool beContinue     = true;
       bool lumaContinue   = true;
       bool chromaContinue = true;
 
       while (beContinue)
+      
       {
         if (partitioner.currArea().lwidth() > 64 || partitioner.currArea().lheight() > 64)
+          // 如果划分后的子区域的宽高依旧大于64，则要执行以下语句四遍，对应划分后的四个子区域：
+          //单树划分
         {
           if (cs.picture->blocks[partitioner.chType].contains(partitioner.currArea().blocks[partitioner.chType].pos()))
           {
-            coding_tree(cs, partitioner, cuCtx, pPartitionerChroma, pCuCtxChroma);
+            coding_tree(cs, partitioner, cuCtx, pPartitionerChroma, pCuCtxChroma);//递归调用，继续四叉树划分
           }
-          lumaContinue   = partitioner.nextPart(cs);
-          chromaContinue = pPartitionerChroma->nextPart(cs);
+          lumaContinue   = partitioner.nextPart(cs);//切换到亮度划分后的多个子区域中的下一个
+          chromaContinue = pPartitionerChroma->nextPart(cs);//切换到色度划分后的多个子区域中的下一个
           CHECK(lumaContinue != chromaContinue, "luma chroma partition should be matched");
           beContinue = lumaContinue;
         }
-        else
-        {
+        else //如果划分后的子区域的宽高不大于64，则要执行以下语句四遍，对应划分后的四个子区域：
+        {//双树划分
           // dual tree coding under 64x64 block
           if (cs.picture->blocks[partitioner.chType].contains(partitioner.currArea().blocks[partitioner.chType].pos()))
           {
-            coding_tree(cs, partitioner, cuCtx);
+            coding_tree(cs, partitioner, cuCtx);//递归调用，继续亮度划分
           }
-          lumaContinue = partitioner.nextPart(cs);
+          lumaContinue = partitioner.nextPart(cs);//切换到亮度划分后的多个子区域中的下一个
           if (cs.picture->blocks[pPartitionerChroma->chType].contains(
                 pPartitionerChroma->currArea().blocks[pPartitionerChroma->chType].pos()))
           {
-            coding_tree(cs, *pPartitionerChroma, *pCuCtxChroma);
+            coding_tree(cs, *pPartitionerChroma, *pCuCtxChroma);//递归调用，继续色度划分
           }
-          chromaContinue = pPartitionerChroma->nextPart(cs);
+          chromaContinue = pPartitionerChroma->nextPart(cs);//切换到色度划分后的多个子区域中的下一个
           CHECK(lumaContinue != chromaContinue, "luma chroma partition should be matched");
           beContinue = lumaContinue;
         }
       }
-      partitioner.exitCurrSplit();
-      pPartitionerChroma->exitCurrSplit();
+      partitioner.exitCurrSplit();//退出亮度当前四叉树划分
+      pPartitionerChroma->exitCurrSplit();//退出色度当前四叉树划分    该函数用cu的next指针分别将色度和亮度的cu串起来，并且将最后一个亮度cu的next指针指向第一个色度cu
     }
     else
+    //长宽都小于64
     {
       const ModeType modeTypeParent = partitioner.modeType;
       const ModeType modeTypeChild  = CU::getModeTypeAtDepth(cu, partitioner.currDepth);
@@ -489,7 +522,7 @@ void CABACWriter::coding_tree(const CodingStructure& cs, Partitioner& partitione
         partitioner.treeType = chromaNotSplit ? TREE_L : TREE_D;
       }
       partitioner.splitCurrArea( splitMode, cs );
-
+      //划分循环——亮度
       do
       {
         if( cs.picture->blocks[partitioner.chType].contains( partitioner.currArea().blocks[partitioner.chType].pos() ) )
@@ -499,9 +532,18 @@ void CABACWriter::coding_tree(const CodingStructure& cs, Partitioner& partitione
       } while( partitioner.nextPart( cs ) );
 
       partitioner.exitCurrSplit();
+
+      /*  
+          将亮度划分类实例变为色度划分类实例
+          将treeType变为TREE_C
+          调用coding_tree()为当前chroma cu解析
+          再将色度划分类实例变为亮度划分类实例
+          treeType设置为默认值TREE_D
+*/
       if( chromaNotSplit )
+
       {
-        if (isChromaEnabled(cs.pcv->chrFormat))
+        if (isChromaEnabled(cs.pcv->chrFormat)) //划分色度
         {
           CHECK(partitioner.chType != CHANNEL_TYPE_LUMA, "must be luma status");
           partitioner.chType   = CHANNEL_TYPE_CHROMA;
@@ -512,16 +554,18 @@ void CABACWriter::coding_tree(const CodingStructure& cs, Partitioner& partitione
             coding_tree(cs, partitioner, cuCtx);
           }
         }
-
+        
         //recover
         partitioner.chType = CHANNEL_TYPE_LUMA;
         partitioner.treeType = TREE_D;
       }
+      //将modeType恢复到未划分之前的值
       partitioner.modeType = modeTypeParent;
     }
     return;
   }
-
+  //要想进入此处，必须不是CU_DONT_SPLI(如果是的话，表示当前区域是CU，不能再划分了)，而且此函数只有亮度或色度的划分类实例和CU上下文类实例传入。
+  // 也就是说划分标志位编码完毕，开始编码CU的信息
   // Predict QP on start of quantization group
   if( cuCtx.qgStart )
   {
@@ -530,10 +574,10 @@ void CABACWriter::coding_tree(const CodingStructure& cs, Partitioner& partitione
   }
   CHECK( cu.treeType != partitioner.treeType, "treeType mismatch" );
 
-
+  
   // coding unit
   coding_unit( cu, partitioner, cuCtx );
-
+  //调试追踪信息
   if( cu.chType == CHANNEL_TYPE_CHROMA )
   {
     DTRACE_COND( (isEncoding()), g_trace_ctx, D_QP, "[chroma CU]x=%d, y=%d, w=%d, h=%d, qp=%d\n", cu.Cb().x, cu.Cb().y, cu.Cb().width, cu.Cb().height, cu.qp );
@@ -643,9 +687,10 @@ void CABACWriter::split_cu_mode( const PartSplit split, const CodingStructure& c
 //    void  rqt_root_cbf              ( cu )
 //    void  end_of_ctu                ( cu, cuCtx )
 //================================================================================
-
+//对CU进行编码
+//可以从这里出发查看编码各个标志位的顺序
 void CABACWriter::coding_unit( const CodingUnit& cu, Partitioner& partitioner, CUCtx& cuCtx )
-{
+{//跟踪调试信息
   DTRACE( g_trace_ctx, D_SYNTAX, "coding_unit() treeType=%d modeType=%d\n", cu.treeType, cu.modeType );
   CodingStructure& cs = *cu.cs;
 
@@ -1444,7 +1489,7 @@ void CABACWriter::end_of_ctu( const CodingUnit& cu, CUCtx& cuCtx )
 {
   const bool    isLastSubCUOfCtu  = CU::isLastSubCUOfCtu( cu );
 
-  if ( isLastSubCUOfCtu
+  if (isLastSubCUOfCtu  
     && ( !cu.isSepTree() || cu.chromaFormat == CHROMA_400 || isChroma( cu.chType ) )
       )
   {

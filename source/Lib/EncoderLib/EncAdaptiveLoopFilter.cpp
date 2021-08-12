@@ -1002,18 +1002,19 @@ void EncAdaptiveLoopFilter::ALFProcess(CodingStructure& cs, const double *lambda
     }
   }
 
-  // get CTB stats for filtering
+  // get CTB stats for filtering，提取CTB块的统计信息
   deriveStatsForFiltering( orgYuv, recYuv, cs );
 
-  for (int ctbIdx = 0; ctbIdx < m_numCTUsInPic; ctbIdx++)
+  for (int ctbIdx = 0; ctbIdx < m_numCTUsInPic; ctbIdx++)//遍历CTU
   {
-    cs.slice->getPic()->getAlfCtbFilterIndex()[ctbIdx] = NUM_FIXED_FILTER_SETS;
+    cs.slice->getPic()->getAlfCtbFilterIndex()[ctbIdx] = NUM_FIXED_FILTER_SETS;//将已有的固定参数ALF加入
   }
   // consider using new filter (only)
   alfParam.newFilterFlag[CHANNEL_TYPE_LUMA] = true;
   alfParam.newFilterFlag[CHANNEL_TYPE_CHROMA] = true;
   cs.slice->setNumAlfApsIdsLuma(1); // Only new filter for RD cost optimization
   // derive filter (luma)
+  //计算ALF的参数
   alfEncoder( cs, alfParam, orgYuv, recYuv, cs.getRecoBuf(), CHANNEL_TYPE_LUMA
 #if ENABLE_QPA
             , lambdaChromaWeight
@@ -1040,7 +1041,7 @@ void EncAdaptiveLoopFilter::ALFProcess(CodingStructure& cs, const double *lambda
     , lambdaChromaWeight
 #endif
   );
-
+  //待定，可能为状态恢复
   for (int s = 0; s < numSliceSegments; s++)
   {
     if (pcPic->slices[s]->isLossless())
@@ -1054,9 +1055,9 @@ void EncAdaptiveLoopFilter::ALFProcess(CodingStructure& cs, const double *lambda
       }
     }
   }
-
+  //重建YUV视频，这里为滤波操作的入口
   alfReconstructor(cs, recYuv);
-
+  //开始对色度分量进行操作
   // Do not transmit CC ALF if it is unchanged
   if (cs.slice->getAlfEnabledFlag(COMPONENT_Y))
   {
@@ -1070,6 +1071,7 @@ void EncAdaptiveLoopFilter::ALFProcess(CodingStructure& cs, const double *lambda
       }
     }
   }
+  
   int chromaAlfApsId = ( cs.slice->getAlfEnabledFlag(COMPONENT_Cb) || cs.slice->getAlfEnabledFlag(COMPONENT_Cr) ) ? cs.slice->getAlfApsIdChroma() : -1;
   APS* aps = (chromaAlfApsId >= 0) ? m_apsMap->getPS((chromaAlfApsId << NUM_APS_TYPE_LEN) + ALF_APS) : nullptr;
   if (aps && m_apsMap->getChangedFlag((chromaAlfApsId << NUM_APS_TYPE_LEN) + ALF_APS))
@@ -1077,28 +1079,28 @@ void EncAdaptiveLoopFilter::ALFProcess(CodingStructure& cs, const double *lambda
     aps->getCcAlfAPSParam().newCcAlfFilter[0] = false;
     aps->getCcAlfAPSParam().newCcAlfFilter[1] = false;
   }
-
+  
   if (!cs.slice->getSPS()->getCCALFEnabledFlag())
   {
     return;
   }
-
+  // CCALF的初始化
   m_tempBuf.get(COMPONENT_Cb).copyFrom(cs.getRecoBuf().get(COMPONENT_Cb));
   m_tempBuf.get(COMPONENT_Cr).copyFrom(cs.getRecoBuf().get(COMPONENT_Cr));
   recYuv = m_tempBuf.getBuf(cs.area);
   recYuv.extendBorderPel(MAX_ALF_FILTER_LENGTH >> 1);
-
+ 
   deriveStatsForCcAlfFiltering(orgYuv, recYuv, COMPONENT_Cb, m_numCTUsInWidth, (0 + 1), cs);
   deriveStatsForCcAlfFiltering(orgYuv, recYuv, COMPONENT_Cr, m_numCTUsInWidth, (0 + 1), cs);
   initDistortionCcalf();
-
+ 
   m_CABACEstimator->getCtx() = SubCtx(Ctx::CcAlfFilterControlFlag, ctxStartCcAlf);
   deriveCcAlfFilter(cs, COMPONENT_Cb, orgYuv, recYuv, cs.getRecoBuf());
   m_CABACEstimator->getCtx() = SubCtx(Ctx::CcAlfFilterControlFlag, ctxStartCcAlf);
   deriveCcAlfFilter(cs, COMPONENT_Cr, orgYuv, recYuv, cs.getRecoBuf());
 
   xSetupCcAlfAPS(cs);
-
+  //CCALF 操作
   for (int compIdx = 1; compIdx < getNumberValidComponents(cs.pcv->chrFormat); compIdx++)
   {
     ComponentID compID     = ComponentID(compIdx);
@@ -2137,7 +2139,7 @@ void EncAdaptiveLoopFilter::deriveStatsForFiltering( PelUnitBuf& orgYuv, PelUnit
   int horVirBndryPos[] = { 0, 0, 0 };
   int verVirBndryPos[] = { 0, 0, 0 };
 
-  for( int yPos = 0; yPos < m_picHeight; yPos += m_maxCUHeight )
+  for( int yPos = 0; yPos < m_picHeight; yPos += m_maxCUHeight )//遍历CU
   {
     for( int xPos = 0; xPos < m_picWidth; xPos += m_maxCUWidth )
     {

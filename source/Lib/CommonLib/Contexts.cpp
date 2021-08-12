@@ -120,6 +120,11 @@ const BinFracBits ProbModelTables::m_binFracBits[256] = {
   { { 0x28beb, 0x0057e } }, { { 0x2a658, 0x004c0 } }, { { 0x2c531, 0x00403 } }, { { 0x2ea40, 0x00346 } },
   { { 0x318a9, 0x0028b } }, { { 0x356cb, 0x001d0 } }, { { 0x3b520, 0x00116 } }, { { 0x48000, 0x0005c } },
 };
+/*
+在上下文建模的初始化中，确定initValue的值后，会根据这个值以及QP的值计算两个概率参数iPA和iPB。VTM4.0中采用了并行双窗口技术，使用了两个独立的概率参数iPA
+和iPB ，表示概率的估计值。这两个参数以2^15(32153)将概率区间[0,1] 扩展,
+以整数进行表示。此外还确定了一个控制上下文模型概率更新速度的参数M 
+*/
 void BinProbModel_Std::init( int qp, int initId )
 {
   int slope = (initId >> 3) - 4;
@@ -184,7 +189,13 @@ const CtxSet ContextSetCfg::SplitFlag = ContextSetCfg::addCtxSet
   {  19,  28,  38,  27,  29,  38,  20,  30,  31, },
   {  12,  13,   8,   8,  13,  12,   5,   9,   9, },
 });
-
+/*
+上下文模型中存储的值是initValue,这个值与0和1的概率大小p(0)和p(1)有关。上下文模型的选择就 是选择合适的initValue，initValue的值与slice的类型以及已编码的语法元素有关。
+这些用来作为条件的 已编码符号信息称为上下文。以splitQtflag为例，下面是存放splitQtflag的initValue值的表格。
+该表格的横坐标与slice的类型有关，B、P、I分别对应第0、1、2行。该表格纵坐标的取值，与已编码过的 当前CU的左边和上边的CU的splitQtflag有关：当左块和上块都不在继续划分时取第0列；
+当左块继续划分上块不再划分时取第1列；当左块和上块都继续划分时取第2列。另外，当uiDepth < ucMinDepth时 取第3 列；当uiDepth >= ucMaxDepth + 1时取第4列。
+选取的initValue值的位置以ctxIdx标识，每一 个initValue值都对应一个ctxIdx号。语法元素ctxIdx称为上下文索引，每一个模型都能够由唯一的索引 号标注。
+*/
 const CtxSet ContextSetCfg::SplitQtFlag = ContextSetCfg::addCtxSet
 ({
   {  26,  36,  38,  18,  34,  21, },
