@@ -268,6 +268,7 @@ void EncCu::compressCtu( CodingStructure& cs, const UnitArea& area, const unsign
   partitioner.initCtu(area, CH_L, *cs.slice);
   if (m_pcEncCfg->getIBCMode())
   {
+    //如果使用IBC，初始化IBC搜索范围 根据当前CU处于CTU中的位置限制IBC搜索范围
     if (area.lx() == 0 && area.ly() == 0)
     {
       m_pcInterSearch->resetIbcSearch();
@@ -301,7 +302,7 @@ void EncCu::compressCtu( CodingStructure& cs, const UnitArea& area, const unsign
   tempCS->currQP[CH_L] = bestCS->currQP[CH_L] =
   tempCS->baseQP       = bestCS->baseQP       = currQP[CH_L];
   tempCS->prevQP[CH_L] = bestCS->prevQP[CH_L] = prevQP[CH_L];
-
+  //亮度 CU编码
   xCompressCU(tempCS, bestCS, partitioner);
   cs.slice->m_mapPltCost[0].clear();
   cs.slice->m_mapPltCost[1].clear();
@@ -309,7 +310,7 @@ void EncCu::compressCtu( CodingStructure& cs, const UnitArea& area, const unsign
   const bool copyUnsplitCTUSignals = bestCS->cus.size() == 1;
   cs.useSubStructure(*bestCS, partitioner.chType, CS::getArea(*bestCS, area, partitioner.chType), copyUnsplitCTUSignals,
                      false, false, copyUnsplitCTUSignals, true);
-
+  //色度 CU编码
   if (CS::isDualITree (cs) && isChromaEnabled (cs.pcv->chrFormat))
   {
     m_CABACEstimator->getCtx() = m_CurrCtx->start;
@@ -553,8 +554,11 @@ void EncCu::xCompressCU( CodingStructure*& tempCS, CodingStructure*& bestCS, Par
   const TreeType treeTypeParent  = partitioner.treeType;
   const ChannelType chTypeParent = partitioner.chType;
   const UnitArea currCsArea = clipArea( CS::getArea( *bestCS, bestCS->area, partitioner.chType ), *tempCS->picture );
-
+  //根据特征指定一些快速算法 
+  //快速算法主要在这里面实现 决定加入哪些划分方式哪些模式作为候选模式 
+  //以及加入各种编码模式
   m_modeCtrl->initCULevel( partitioner, *tempCS );
+  
 #if GDR_ENABLED
   if (m_pcEncCfg->getGdrEnabled())
   {
@@ -710,6 +714,7 @@ void EncCu::xCompressCU( CodingStructure*& tempCS, CodingStructure*& bestCS, Par
     m_bestBcwCost[0] = m_bestBcwCost[1] = std::numeric_limits<double>::max();
     m_bestBcwIdx[0] = m_bestBcwIdx[1] = -1;
   }
+  /*----------------这里开始测试各种模式------------------*/
   do
   {
     for (int i = compBegin; i < (compBegin + numComp); i++)
@@ -718,7 +723,7 @@ void EncCu::xCompressCU( CodingStructure*& tempCS, CodingStructure*& bestCS, Par
       tempCS->prevPLT.curPLTSize[comID] = curLastPLTSize[comID];
       memcpy(tempCS->prevPLT.curPLT[i], curLastPLT[i], curLastPLTSize[comID] * sizeof(Pel));
     }
-    EncTestMode currTestMode = m_modeCtrl->currTestMode();
+    EncTestMode currTestMode = m_modeCtrl->currTestMode();//出栈，获得当前需要测试的模式
     currTestMode.maxCostAllowed = maxCostAllowed;
 
     if (pps.getUseDQP() && partitioner.isSepTree(*tempCS) && isChroma( partitioner.chType ))
@@ -760,6 +765,7 @@ void EncCu::xCompressCU( CodingStructure*& tempCS, CodingStructure*& bestCS, Par
 
     if( currTestMode.type == ETM_INTER_ME )
     {
+      //整像素精度Inter 常规AMVP模式或者Affine AMVP模式
       if( ( currTestMode.opts & ETO_IMV ) != 0 )
       {
         const bool skipAltHpelIF = ( int( ( currTestMode.opts & ETO_IMV ) >> ETO_IMV_SHIFT ) == 4 ) && ( bestIntPelCost > 1.25 * bestCS->cost );
@@ -780,10 +786,11 @@ void EncCu::xCompressCU( CodingStructure*& tempCS, CodingStructure*& bestCS, Par
     }
     else if (currTestMode.type == ETM_HASH_INTER)
     {
+      //基于hash的快速搜索
       xCheckRDCostHashInter( tempCS, bestCS, partitioner, currTestMode );
     }
     else if( currTestMode.type == ETM_AFFINE )
-    {
+    {//Affine Merge模式
       xCheckRDCostAffineMerge2Nx2N( tempCS, bestCS, partitioner, currTestMode );
     }
 #if REUSE_CU_RESULTS
@@ -793,7 +800,7 @@ void EncCu::xCompressCU( CodingStructure*& tempCS, CodingStructure*& bestCS, Par
     }
 #endif
     else if( currTestMode.type == ETM_MERGE_SKIP )
-    {
+    { //Merge模式和Skip模式
       xCheckRDCostMerge2Nx2N( tempCS, bestCS, partitioner, currTestMode );
       CodingUnit* cu = bestCS->getCU(partitioner.chType);
       if (cu)
@@ -802,7 +809,7 @@ void EncCu::xCompressCU( CodingStructure*& tempCS, CodingStructure*& bestCS, Par
       }
     }
     else if( currTestMode.type == ETM_MERGE_GEO )
-    {
+    {//几何划分模式 
       xCheckRDCostMergeGeo2Nx2N( tempCS, bestCS, partitioner, currTestMode );
     }
     else if( currTestMode.type == ETM_INTRA )
@@ -842,15 +849,15 @@ void EncCu::xCompressCU( CodingStructure*& tempCS, CodingStructure*& bestCS, Par
       }
     }
     else if (currTestMode.type == ETM_PALETTE)
-    {
+    {//PLT
       xCheckPLT( tempCS, bestCS, partitioner, currTestMode );
     }
     else if (currTestMode.type == ETM_IBC)
-    {
+    {//IBC
       xCheckRDCostIBCMode(tempCS, bestCS, partitioner, currTestMode);
     }
     else if (currTestMode.type == ETM_IBC_MERGE)
-    {
+    {//IBC Merge
       xCheckRDCostIBCModeMerge2Nx2N(tempCS, bestCS, partitioner, currTestMode);
     }
     else if( isModeSplit( currTestMode ) )
@@ -1863,6 +1870,7 @@ void EncCu::xCheckPLT(CodingStructure *&tempCS, CodingStructure *&bestCS, Partit
   tempCS->addTU(CS::getArea(*tempCS, tempCS->area, partitioner.chType), partitioner.chType);
   // Search
   tempCS->dist = 0;
+  //主要函数为PLTSearch 内部调用derivePLTLossy获取调色板 再reorder 最后按照两种扫描顺序进行游程编码
   if (cu.isSepTree())
   {
     if (isLuma(partitioner.chType))
@@ -2096,7 +2104,7 @@ void EncCu::xCheckRDCostHashInter( CodingStructure *&tempCS, CodingStructure *&b
   CU::addPUs(cu);
   cu.mmvdSkip = false;
   cu.firstPU->mmvdMergeFlag = false;
-
+  //进行Hash搜索 内部调用 xHashInterEstimation
   if (m_pcInterSearch->predInterHashSearch(cu, partitioner, isPerfectMatch))
   {
     double equBcwCost = MAX_DOUBLE;
@@ -2134,7 +2142,7 @@ void EncCu::xCheckRDCostMerge2Nx2N( CodingStructure *&tempCS, CodingStructure *&
   bool isEncodeGdrClean = false;
   CodingStructure *cs;
 #endif
-  if (sps.getSbTMVPEnabledFlag())
+  if (sps.getSbTMVPEnabledFlag())//启用SbTMVP （如果相邻块使用了同位图作为参考帧 那么将相邻块的MV应用于当前块）
   {
     Size bufSize = g_miScaling.scale( tempCS->area.lumaSize() );
     mergeCtx.subPuMvpMiBuf    = MotionBuf( m_SubPuMiBuf,    bufSize );
@@ -2144,7 +2152,7 @@ void EncCu::xCheckRDCostMerge2Nx2N( CodingStructure *&tempCS, CodingStructure *&
   setMergeBestSATDCost( MAX_DOUBLE );
 
   {
-    // first get merge candidates
+    // first get merge candidates 获取merge列表
     CodingUnit cu( tempCS->area );
     cu.cs       = tempCS;
     cu.predMode = MODE_INTER;
@@ -2154,28 +2162,29 @@ void EncCu::xCheckRDCostMerge2Nx2N( CodingStructure *&tempCS, CodingStructure *&
     PredictionUnit pu( tempCS->area );
     pu.cu = &cu;
     pu.cs = tempCS;
-    PU::getInterMergeCandidates(pu, mergeCtx, 0);
-    PU::getInterMMVDMergeCandidates(pu, mergeCtx);
+    PU::getInterMergeCandidates(pu, mergeCtx, 0);//获得常规Merge获选列表
+    PU::getInterMMVDMergeCandidates(pu, mergeCtx);//获得MMVD Merge获选列表
     pu.regularMergeFlag = true;
 #if GDR_ENABLED
     cs = pu.cs;
     isEncodeGdrClean = cs->sps->getGDREnabledFlag() && cs->pcv->isEncoder && ((cs->picHeader->getInGdrInterval() && cs->isClean(pu.Y().topRight(), CHANNEL_TYPE_LUMA)) || (cs->picHeader->getNumVerVirtualBoundaries() == 0));
 #endif
   }
-  bool candHasNoResidual[MRG_MAX_NUM_CANDS + MMVD_ADD_NUM];
+  bool candHasNoResidual[MRG_MAX_NUM_CANDS + MMVD_ADD_NUM];//候选模式是否有残差 一共有6（Merge） + 64（MMVD Merge)
   for (uint32_t ui = 0; ui < MRG_MAX_NUM_CANDS + MMVD_ADD_NUM; ui++)
   {
     candHasNoResidual[ui] = false;
   }
 
-  bool        bestIsSkip     = false;
-  bool        bestIsMMVDSkip = true;
-  PelUnitBuf  acMergeBuffer[MRG_MAX_NUM_CANDS];
-  PelUnitBuf  acMergeTmpBuffer[MRG_MAX_NUM_CANDS];
+  bool        bestIsSkip     = false;//最佳模式是Skip模式
+  bool        bestIsMMVDSkip = true;//最佳模式是MMVD Skip模式
+  PelUnitBuf  acMergeBuffer[MRG_MAX_NUM_CANDS];//存储常规Merge模式预测像素
+  PelUnitBuf  acMergeTmpBuffer[MRG_MAX_NUM_CANDS];//用来存储常规Merge模式预测像素的临时空间
   PelUnitBuf  acMergeRealBuffer[MMVD_MRG_MAX_RD_BUF_NUM];
-  PelUnitBuf *acMergeTempBuffer[MMVD_MRG_MAX_RD_NUM];
+  PelUnitBuf *acMergeTempBuffer[MMVD_MRG_MAX_RD_NUM];//用来存储MMVD Merge模式的临时空间
   PelUnitBuf *singleMergeTempBuffer;
   int         insertPos;
+  // 进行SATD Cost计算的模式数目，初始化为可用常规Merge数目+64，后面会缩减
   unsigned    uiNumMrgSATDCand = mergeCtx.numValidMergeCand + MMVD_ADD_NUM;
 
   struct ModeInfo
@@ -2191,20 +2200,23 @@ void EncCu::xCheckRDCostMerge2Nx2N( CodingStructure *&tempCS, CodingStructure *&
 
   static_vector<ModeInfo, MRG_MAX_NUM_CANDS + MMVD_ADD_NUM>  RdModeList;
   bool                                        mrgTempBufSet = false;
+  //确定候选模式数量 （因为MMVD最大为64（8*4*2 以两个base mv 在4个方向 8个步长） 存在一些情况没有64那么多）
   const int candNum = mergeCtx.numValidMergeCand + (tempCS->sps->getUseMMVD() ? std::min<int>(MMVD_BASE_MV_NUM, mergeCtx.numValidMergeCand) * MMVD_MAX_REFINE_NUM : 0);
 
   for (int i = 0; i < candNum; i++)
   {
     if (i < mergeCtx.numValidMergeCand)
     {
+      //先加入普通merge模式
       RdModeList.push_back(ModeInfo(i, true, false, false));
     }
     else
-    {
+    {//再加入MMVD merge模式
       RdModeList.push_back(ModeInfo(std::min(MMVD_ADD_NUM, i - mergeCtx.numValidMergeCand), false, true, false));
     }
   }
 
+  // 初始化一个和当前CU相同大小的区域
   const UnitArea localUnitArea(tempCS->area.chromaFormat, Area(0, 0, tempCS->area.Y().width, tempCS->area.Y().height));
   for (unsigned i = 0; i < MMVD_MRG_MAX_RD_BUF_NUM; i++)
   {
@@ -2219,22 +2231,22 @@ void EncCu::xCheckRDCostMerge2Nx2N( CodingStructure *&tempCS, CodingStructure *&
     }
   }
 
-  bool isIntrainterEnabled = sps.getUseCiip();
+  bool isIntrainterEnabled = sps.getUseCiip();//是否使用CIIP 组合Intra Inter加权预测
   if (bestCS->area.lwidth() * bestCS->area.lheight() < 64 || bestCS->area.lwidth() >= MAX_CU_SIZE || bestCS->area.lheight() >= MAX_CU_SIZE)
   {
     isIntrainterEnabled = false;
   }
-  bool isTestSkipMerge[MRG_MAX_NUM_CANDS]; // record if the merge candidate has tried skip mode
+  bool isTestSkipMerge[MRG_MAX_NUM_CANDS]; // 记录Merge候选对象是否尝试了Skip模式record if the merge candidate has tried skip mode
   for (uint32_t idx = 0; idx < MRG_MAX_NUM_CANDS; idx++)
   {
     isTestSkipMerge[idx] = false;
   }
   if( m_pcEncCfg->getUseFastMerge() || isIntrainterEnabled)
   {
-    uiNumMrgSATDCand = NUM_MRG_SATD_CAND;
+    uiNumMrgSATDCand = NUM_MRG_SATD_CAND;//SATD候选模式数：4
     if (isIntrainterEnabled)
     {
-      uiNumMrgSATDCand += 1;
+      uiNumMrgSATDCand += 1;//增加一个CIIP模式
     }
     bestIsSkip       = false;
 
@@ -2286,6 +2298,7 @@ void EncCu::xCheckRDCostMerge2Nx2N( CodingStructure *&tempCS, CodingStructure *&
       m_pcRdCost->setDistParam (distParam, tempCS->getOrgBuf().Y(), m_acMergeBuffer[0].Y(), sps.getBitDepth (CHANNEL_TYPE_LUMA), COMPONENT_Y, bUseHadamard);
 
       const UnitArea localUnitArea( tempCS->area.chromaFormat, Area( 0, 0, tempCS->area.Y().width, tempCS->area.Y().height) );
+      // 遍历常规可用Merge候选项，计算SAD并更新候选列表
       for( uint32_t uiMergeCand = 0; uiMergeCand < mergeCtx.numValidMergeCand; uiMergeCand++ )
       {
         mergeCtx.setMergeInfo( pu, uiMergeCand );
@@ -2294,6 +2307,7 @@ void EncCu::xCheckRDCostMerge2Nx2N( CodingStructure *&tempCS, CodingStructure *&
         pu.mvRefine = true;
         distParam.cur = singleMergeTempBuffer->Y();
         acMergeTmpBuffer[uiMergeCand] = m_acMergeTmpBuffer[uiMergeCand].getBuf(localUnitArea);
+        //运动补偿
         m_pcInterSearch->motionCompensation(pu, *singleMergeTempBuffer, REF_PIC_LIST_X, true, true, &(acMergeTmpBuffer[uiMergeCand]));
         acMergeBuffer[uiMergeCand] = m_acRealMergeBuffer[uiMergeCand].getBuf(localUnitArea);
         acMergeBuffer[uiMergeCand].copyFrom(*singleMergeTempBuffer);
@@ -2361,7 +2375,9 @@ void EncCu::xCheckRDCostMerge2Nx2N( CodingStructure *&tempCS, CodingStructure *&
           }
         }
 #endif
+        //把该模式的结果插入到costList中
         updateCandList(ModeInfo(uiMergeCand, true, false, false), cost, RdModeList, candCostList, uiNumMrgSATDCand, &insertPos);
+        //插入成功
         if (insertPos != -1)
         {
           if (insertPos == RdModeList.size() - 1)
@@ -2393,6 +2409,7 @@ void EncCu::xCheckRDCostMerge2Nx2N( CodingStructure *&tempCS, CodingStructure *&
         {
           CiipMergeCand[mergeCnt] = RdModeList[mergeCnt].mergeCand;
         }
+        // 遍历CIIP模式需要测试的候选Merge模式
         for (uint32_t mergeCnt = 0; mergeCnt < std::min(std::min(NUM_MRG_SATD_CAND, (const int)mergeCtx.numValidMergeCand), 4); mergeCnt++)
         {
           uint32_t mergeCand = CiipMergeCand[mergeCnt];
@@ -2401,7 +2418,7 @@ void EncCu::xCheckRDCostMerge2Nx2N( CodingStructure *&tempCS, CodingStructure *&
           // estimate merge bits
           mergeCtx.setMergeInfo(pu, mergeCand);
 
-          // first round
+          // first round 帧内使用Planar模式
           pu.intraDir[0] = PLANAR_IDX;
           uint32_t intraCnt = 0;
           // generate intrainter Y prediction
@@ -2411,11 +2428,13 @@ void EncCu::xCheckRDCostMerge2Nx2N( CodingStructure *&tempCS, CodingStructure *&
             m_pcIntraSearch->predIntraAng(COMPONENT_Y, pu.cs->getPredBuf(pu).Y(), pu);
             m_pcIntraSearch->switchBuffer(pu, COMPONENT_Y, pu.cs->getPredBuf(pu).Y(), m_pcIntraSearch->getPredictorPtr2(COMPONENT_Y, intraCnt));
           }
+          //加载相应Merge模式产生的帧间预测像素
           pu.cs->getPredBuf(pu).copyFrom(acMergeTmpBuffer[mergeCand]);
           if (pu.cs->slice->getLmcsEnabledFlag() && m_pcReshape->getCTUFlag())
           {
             pu.cs->getPredBuf(pu).Y().rspSignal(m_pcReshape->getFwdLUT());
           }
+          // 计算CIIP预测像素
           m_pcIntraSearch->geneWeightedPred(COMPONENT_Y, pu.cs->getPredBuf(pu).Y(), pu, m_pcIntraSearch->getPredictorPtr2(COMPONENT_Y, intraCnt));
 
           // calculate cost
@@ -2482,6 +2501,10 @@ void EncCu::xCheckRDCostMerge2Nx2N( CodingStructure *&tempCS, CodingStructure *&
         }
         pu.ciipFlag = false;
       }
+
+
+      /*-------------下面开始MMVD------------*/
+      //选出最优的MMVD的Merge候选（初始MV+搜索方向+搜索步长）
       if ( pu.cs->sps->getUseMMVD() )
       {
         cu.mmvdSkip = true;
@@ -2489,8 +2512,9 @@ void EncCu::xCheckRDCostMerge2Nx2N( CodingStructure *&tempCS, CodingStructure *&
         const int tempNum = (mergeCtx.numValidMergeCand > 1) ? MMVD_ADD_NUM : MMVD_ADD_NUM >> 1;
         for (int mmvdMergeCand = 0; mmvdMergeCand < tempNum; mmvdMergeCand++)
         {
+          //初始MV索引，要么0 要么1（这里就是两个初始MV的起点，每个初始MV有32种4*8的步长+方向的组合）
           int baseIdx = mmvdMergeCand / MMVD_MAX_REFINE_NUM;
-          int refineStep = (mmvdMergeCand - (baseIdx * MMVD_MAX_REFINE_NUM)) / 4;
+          int refineStep = (mmvdMergeCand - (baseIdx * MMVD_MAX_REFINE_NUM)) / 4;//8种步长
           if (refineStep >= m_pcEncCfg->getMmvdDisNum())
           {
             continue;
@@ -2505,6 +2529,7 @@ void EncCu::xCheckRDCostMerge2Nx2N( CodingStructure *&tempCS, CodingStructure *&
             pu.mvValid[REF_PIC_LIST_1] = true;
           }
 #endif
+          //设置MMVD候选的信息，得到每个扩展MV具体的搜索初始点以及每个方向以及对应的步长
           mergeCtx.setMmvdMergeCandiInfo(pu, mmvdMergeCand);
 
           PU::spanMotionInfo(pu, mergeCtx);
@@ -2513,14 +2538,15 @@ void EncCu::xCheckRDCostMerge2Nx2N( CodingStructure *&tempCS, CodingStructure *&
           pu.mmvdEncOptMode = (refineStep > 2 ? 2 : 1);
           CHECK(!pu.mmvdMergeFlag, "MMVD merge should be set");
           // Don't do chroma MC here
+          //MMVD的merge候选运动补偿
           m_pcInterSearch->motionCompensation(pu, *singleMergeTempBuffer, REF_PIC_LIST_X, true, false);
           pu.mmvdEncOptMode = 0;
           pu.mvRefine = false;
-          Distortion uiSad = distParam.distFunc(distParam);
+          Distortion uiSad = distParam.distFunc(distParam);//计算失真
 
           m_CABACEstimator->getCtx() = ctxStart;
-          uint64_t fracBits = m_pcInterSearch->xCalcPuMeBits(pu);
-          double cost = (double)uiSad + (double)fracBits * sqrtLambdaForFirstPassIntra;
+          uint64_t fracBits = m_pcInterSearch->xCalcPuMeBits(pu);//计算比特
+          double cost = (double)uiSad + (double)fracBits * sqrtLambdaForFirstPassIntra;//RDcost
           insertPos = -1;
 
 #if GDR_ENABLED
@@ -2559,6 +2585,7 @@ void EncCu::xCheckRDCostMerge2Nx2N( CodingStructure *&tempCS, CodingStructure *&
         }
       }
       // Try to limit number of candidates using SATD-costs
+      //如果当前RDcost大于最小的1.25倍 说明很大 直接去除
       for( uint32_t i = 1; i < uiNumMrgSATDCand; i++ )
       {
         if( candCostList[i] > MRG_FAST_RATIO * candCostList[0] )
@@ -2570,12 +2597,12 @@ void EncCu::xCheckRDCostMerge2Nx2N( CodingStructure *&tempCS, CodingStructure *&
 
       setMergeBestSATDCost( candCostList[0] );
 
-      if (isIntrainterEnabled && isChromaEnabled(pu.cs->pcv->chrFormat))
+      if (isIntrainterEnabled && isChromaEnabled(pu.cs->pcv->chrFormat))//CIIP 色度可用
       {
         pu.ciipFlag = true;
         for (uint32_t mergeCnt = 0; mergeCnt < uiNumMrgSATDCand; mergeCnt++)
         {
-          if (RdModeList[mergeCnt].isCIIP)
+          if (RdModeList[mergeCnt].isCIIP)//CIIP模式计算色度分量的Planar
           {
             pu.intraDir[0] = PLANAR_IDX;
             pu.intraDir[1] = DM_CHROMA_IDX;
@@ -2615,12 +2642,13 @@ void EncCu::xCheckRDCostMerge2Nx2N( CodingStructure *&tempCS, CodingStructure *&
   uint32_t iteration;
   uint32_t iterationBegin = 0;
   iteration = 2;
+  //第一次merge模式，第二次skip模式
   for (uint32_t uiNoResidualPass = iterationBegin; uiNoResidualPass < iteration; ++uiNoResidualPass)
   {
     for( uint32_t uiMrgHADIdx = 0; uiMrgHADIdx < uiNumMrgSATDCand; uiMrgHADIdx++ )
     {
       uint32_t uiMergeCand = RdModeList[uiMrgHADIdx].mergeCand;
-
+      //skip轮次 CIIP不支持 所以直接跳过
       if (uiNoResidualPass != 0 && RdModeList[uiMrgHADIdx].isCIIP) // intrainter does not support skip mode
       {
         if (isTestSkipMerge[uiMergeCand])
@@ -2650,7 +2678,7 @@ void EncCu::xCheckRDCostMerge2Nx2N( CodingStructure *&tempCS, CodingStructure *&
       cu.chromaQpAdj      = m_cuChromaQpOffsetIdxPlus1;
       cu.qp               = encTestMode.qp;
       PredictionUnit &pu  = tempCS->addPU( cu, partitioner.chType );
-
+      // 常规Merge模式并且是CIIP模式
       if (uiNoResidualPass == 0 && RdModeList[uiMrgHADIdx].isCIIP)
       {
         cu.mmvdSkip = false;
@@ -2661,7 +2689,7 @@ void EncCu::xCheckRDCostMerge2Nx2N( CodingStructure *&tempCS, CodingStructure *&
         CHECK(pu.intraDir[0]<0 || pu.intraDir[0]>(NUM_LUMA_MODE - 1), "out of intra mode");
         pu.intraDir[1] = DM_CHROMA_IDX;
       }
-      else if (RdModeList[uiMrgHADIdx].isMMVD)
+      else if (RdModeList[uiMrgHADIdx].isMMVD)//待测模式是MMVD模式
       {
         cu.mmvdSkip = true;
         pu.regularMergeFlag = true;
@@ -2691,7 +2719,7 @@ void EncCu::xCheckRDCostMerge2Nx2N( CodingStructure *&tempCS, CodingStructure *&
           int dx, dy, i, j, num = 0;
           dy = std::min<int>(pu.lumaSize().height, DMVR_SUBCU_HEIGHT);
           dx = std::min<int>(pu.lumaSize().width, DMVR_SUBCU_WIDTH);
-          if (PU::checkDMVRCondition(pu))
+          if (PU::checkDMVRCondition(pu))//DMVR条件？
           {
             for (i = 0; i < (pu.lumaSize().height); i += dy)
             {
@@ -2703,7 +2731,7 @@ void EncCu::xCheckRDCostMerge2Nx2N( CodingStructure *&tempCS, CodingStructure *&
             }
           }
         }
-        if (pu.ciipFlag)
+        if (pu.ciipFlag)//CIIP
         {
           uint32_t bufIdx = 0;
           PelBuf tmpBuf = tempCS->getPredBuf(pu).Y();
@@ -2712,6 +2740,7 @@ void EncCu::xCheckRDCostMerge2Nx2N( CodingStructure *&tempCS, CodingStructure *&
           {
             tmpBuf.rspSignal(m_pcReshape->getFwdLUT());
           }
+          //获得加权预测值
           m_pcIntraSearch->geneWeightedPred(COMPONENT_Y, tmpBuf, pu, m_pcIntraSearch->getPredictorPtr2(COMPONENT_Y, bufIdx));
           if (isChromaEnabled(pu.chromaFormat))
           {
@@ -2735,12 +2764,12 @@ void EncCu::xCheckRDCostMerge2Nx2N( CodingStructure *&tempCS, CodingStructure *&
             }
           }
         }
-        else
+        else//非CIIP ：MMVD 普通merge
         {
-          if (RdModeList[uiMrgHADIdx].isMMVD)
+          if (RdModeList[uiMrgHADIdx].isMMVD)//MMVD
           {
             pu.mmvdEncOptMode = 0;
-            m_pcInterSearch->motionCompensation(pu);
+            m_pcInterSearch->motionCompensation(pu);//运动补偿
           }
           else if (uiNoResidualPass != 0 && RdModeList[uiMrgHADIdx].isCIIP)
           {
@@ -2751,17 +2780,17 @@ void EncCu::xCheckRDCostMerge2Nx2N( CodingStructure *&tempCS, CodingStructure *&
             tempCS->getPredBuf().copyFrom(*acMergeTempBuffer[uiMrgHADIdx]);
           }
         }
-      }
+      }//  if (mrgTempBufSet)
       else
       {
         pu.mvRefine = true;
-        m_pcInterSearch->motionCompensation( pu );
+        m_pcInterSearch->motionCompensation( pu );//运动补偿
         pu.mvRefine = false;
       }
       if (!cu.mmvdSkip && !pu.ciipFlag && uiNoResidualPass != 0)
       {
         CHECK(uiMergeCand >= mergeCtx.numValidMergeCand, "out of normal merge");
-        isTestSkipMerge[uiMergeCand] = true;
+        isTestSkipMerge[uiMergeCand] = true;//对该Merge模式检查了Skip模式
       }
 
 #if GDR_ENABLED
@@ -2792,6 +2821,7 @@ void EncCu::xCheckRDCostMerge2Nx2N( CodingStructure *&tempCS, CodingStructure *&
         xEncodeInterResidual(tempCS, bestCS, partitioner, encTestMode, uiNoResidualPass, uiNoResidualPass == 0 ? &candHasNoResidual[uiMrgHADIdx] : NULL);
       }
 #else
+      // 编码残差
       xEncodeInterResidual( tempCS, bestCS, partitioner, encTestMode, uiNoResidualPass, uiNoResidualPass == 0 ? &candHasNoResidual[uiMrgHADIdx] : NULL );
 #endif
 
@@ -2801,7 +2831,7 @@ void EncCu::xCheckRDCostMerge2Nx2N( CodingStructure *&tempCS, CodingStructure *&
       }
       tempCS->initStructData( encTestMode.qp );
     }// end loop uiMrgHADIdx
-
+    //第一次遍历结果 用于提前终止
     if( uiNoResidualPass == 0 && m_pcEncCfg->getUseEarlySkipDetection() )
     {
       const CodingUnit     &bestCU = *bestCS->getCU( partitioner.chType );
@@ -2880,7 +2910,7 @@ void EncCu::xCheckRDCostMergeGeo2Nx2N(CodingStructure *&tempCS, CodingStructure 
 
   pu.mergeFlag = true;
   pu.regularMergeFlag = false;
-  PU::getGeoMergeCandidates(pu, mergeCtx);
+  PU::getGeoMergeCandidates(pu, mergeCtx);//获得GEO Merge候选列表
 
   GeoComboCostList comboList;
   int bitsCandTB = floorLog2(GEO_NUM_PARTITION_MODE);
@@ -2935,6 +2965,7 @@ void EncCu::xCheckRDCostMergeGeo2Nx2N(CodingStructure *&tempCS, CodingStructure 
 #endif
     if (mergeCand)
     {
+      //如果和前面已经检测过的存在重复 那么跳过
       for (int i = 0; i < mergeCand; i++)
       {
         if (pocMrg[mergeCand] == pocMrg[i] && MrgMv[mergeCand] == MrgMv[i])
@@ -2950,13 +2981,14 @@ void EncCu::xCheckRDCostMergeGeo2Nx2N(CodingStructure *&tempCS, CodingStructure 
       tempCS->initStructData(encTestMode.qp);
       return;
     }
-    m_pcInterSearch->motionCompensation(pu, geoBuffer[mergeCand]);
+    m_pcInterSearch->motionCompensation(pu, geoBuffer[mergeCand]);//运动补偿
+    //保存merge List中MV的运动补偿结果
     geoTempBuf[mergeCand] = m_acMergeTmpBuffer[mergeCand].getBuf(localUnitArea);
     geoTempBuf[mergeCand].Y().copyFrom(geoBuffer[mergeCand].Y());
     geoTempBuf[mergeCand].Y().roundToOutputBitdepth(geoTempBuf[mergeCand].Y(), cu.slice->clpRng(COMPONENT_Y));
     distParamWholeBlk.cur.buf = geoTempBuf[mergeCand].Y().buf;
     distParamWholeBlk.cur.stride = geoTempBuf[mergeCand].Y().stride;
-    sadWholeBlk[mergeCand] = distParamWholeBlk.distFunc(distParamWholeBlk);
+    sadWholeBlk[mergeCand] = distParamWholeBlk.distFunc(distParamWholeBlk);//计算失真
 #if GDR_ENABLED
     bool allOk = (sadWholeBlk[mergeCand] < bestWholeBlkSad);
     if (isEncodeGdrClean)
@@ -2989,12 +3021,14 @@ void EncCu::xCheckRDCostMergeGeo2Nx2N(CodingStructure *&tempCS, CodingStructure 
 
   int wIdx = floorLog2(cu.lwidth()) - GEO_MIN_CU_LOG2;
   int hIdx = floorLog2(cu.lheight()) - GEO_MIN_CU_LOG2;
+  //遍历64种模式
   for (int splitDir = 0; splitDir < GEO_NUM_PARTITION_MODE; splitDir++)
   {
     int maskStride = 0, maskStride2 = 0;
     int stepX = 1;
     Pel* SADmask;
     int16_t angle = g_GeoParams[splitDir][0];
+    //推导出SADmask 用于融合划分边界处的像素
     if (g_angle2mirror[angle] == 2)
     {
       maskStride = -GEO_WEIGHT_MASK_SIZE;
@@ -3015,6 +3049,7 @@ void EncCu::xCheckRDCostMergeGeo2Nx2N(CodingStructure *&tempCS, CodingStructure 
       SADmask = &g_globalGeoEncSADmask[g_angle2mask[g_GeoParams[splitDir][0]]][g_weightOffset[splitDir][hIdx][wIdx][1] * GEO_WEIGHT_MASK_SIZE + g_weightOffset[splitDir][hIdx][wIdx][0]];
     }
     Distortion sadSmall = 0, sadLarge = 0;
+    //对于一种划分方式 遍历mergelisi
     for (uint8_t mergeCand = 0; mergeCand < maxNumMergeCandidates; mergeCand++)
     {
       int bitsCand = mergeCand + 1;
@@ -3050,17 +3085,20 @@ void EncCu::xCheckRDCostMergeGeo2Nx2N(CodingStructure *&tempCS, CodingStructure 
         m_GeoCostList.insert(splitDir, 1, mergeCand, (double)sadSmall + (double)bitsCand * sqrtLambdaForFirstPass);
       }
 #else
+      //使用之前保存的mergeList MV运动补偿结果 已经SADMASK求出该种划分情况下的结果
       m_pcRdCost->setDistParam(distParam, tempCS->getOrgBuf().Y(), geoTempBuf[mergeCand].Y().buf, geoTempBuf[mergeCand].Y().stride, SADmask, maskStride, stepX, maskStride2, sps.getBitDepth(CHANNEL_TYPE_LUMA), COMPONENT_Y);
       sadLarge = distParam.distFunc(distParam);
+      //m_GeoCostList维护一个三维数组 singleDistList[partIdx][geoIdx][mergeIdx]=cost
       m_GeoCostList.insert(splitDir, 0, mergeCand, (double)sadLarge + (double)bitsCand * sqrtLambdaForFirstPass);
       sadSmall = sadWholeBlk[mergeCand] - sadLarge;
       m_GeoCostList.insert(splitDir, 1, mergeCand, (double)sadSmall + (double)bitsCand * sqrtLambdaForFirstPass);
 #endif
     }
   }
-
+  //遍历所有划分方式
   for (int splitDir = 0; splitDir < GEO_NUM_PARTITION_MODE; splitDir++)
   {
+    //将两部分的cost组合 形成最终的cost
     for (int GeoMotionIdx = 0; GeoMotionIdx < maxNumMergeCandidates * (maxNumMergeCandidates - 1); GeoMotionIdx++)
     {
       unsigned int mergeCand0 = m_GeoModeTest[GeoMotionIdx].m_candIdx0;
@@ -3094,7 +3132,7 @@ void EncCu::xCheckRDCostMergeGeo2Nx2N(CodingStructure *&tempCS, CodingStructure 
   {
     return;
   }
-  comboList.sortByCost();
+  comboList.sortByCost();//排序
   bool geocandHasNoResidual[GEO_MAX_TRY_WEIGHTED_SAD];
   for (int mergeCand = 0; mergeCand < GEO_MAX_TRY_WEIGHTED_SAD; mergeCand++)
   {
@@ -3109,7 +3147,7 @@ void EncCu::xCheckRDCostMergeGeo2Nx2N(CodingStructure *&tempCS, CodingStructure 
   const bool useHadamard = !tempCS->slice->getDisableSATDForRD();
   m_pcRdCost->setDistParam(distParamSAD2, tempCS->getOrgBuf().Y(), m_acMergeBuffer[0].Y(), sps.getBitDepth(CHANNEL_TYPE_LUMA), COMPONENT_Y, useHadamard);
   int geoNumMrgSATDCand = min(GEO_MAX_TRY_WEIGHTED_SATD, geoNumCobo);
-
+  //对上面获得的列表 中的两个部分组合 RDO
   for (uint8_t candidateIdx = 0; candidateIdx < min(geoNumCobo, GEO_MAX_TRY_WEIGHTED_SAD); candidateIdx++)
   {
     int splitDir = comboList.list[candidateIdx].splitDir;
@@ -3144,6 +3182,7 @@ void EncCu::xCheckRDCostMergeGeo2Nx2N(CodingStructure *&tempCS, CodingStructure 
     comboList.list[candidateIdx].cost = updateCost;
     updateCandList(candidateIdx, updateCost, geoRdModeList, geocandCostList, geoNumMrgSATDCand);
   }
+  //跳过一些不如之前的
   for (uint8_t i = 0; i < geoNumMrgSATDCand; i++)
   {
     if (geocandCostList[i] > MRG_FAST_RATIO * geocandCostList[0] || geocandCostList[i] > getMergeBestSATDCost() || geocandCostList[i] > getAFFBestSATDCost())
@@ -3167,6 +3206,7 @@ void EncCu::xCheckRDCostMergeGeo2Nx2N(CodingStructure *&tempCS, CodingStructure 
   uint8_t iteration;
   uint8_t iterationBegin = 0;
   iteration = 2;
+  //第一轮 有残差的merge 第二轮 skip
   for (uint8_t noResidualPass = iterationBegin; noResidualPass < iteration; ++noResidualPass)
   {
     for (uint8_t mrgHADIdx = 0; mrgHADIdx < geoNumMrgSATDCand; mrgHADIdx++)
@@ -3263,7 +3303,7 @@ void EncCu::xCheckRDCostAffineMerge2Nx2N( CodingStructure *&tempCS, CodingStruct
 
   tempCS->initStructData( encTestMode.qp );
 
-  AffineMergeCtx affineMergeCtx;
+  AffineMergeCtx affineMergeCtx;//Affine Merge上下文
   const SPS &sps = *tempCS->sps;
   if (sps.getMaxNumAffineMergeCand() == 0)
   {
@@ -3281,7 +3321,7 @@ void EncCu::xCheckRDCostAffineMerge2Nx2N( CodingStructure *&tempCS, CodingStruct
   }
 
   {
-    // first get merge candidates
+    // first get merge candidates 首先获得Merge候选模式
     CodingUnit cu( tempCS->area );
     cu.cs = tempCS;
     cu.predMode = MODE_INTER;
@@ -3297,7 +3337,7 @@ void EncCu::xCheckRDCostAffineMerge2Nx2N( CodingStructure *&tempCS, CodingStruct
     cs = pu.cs;
     isEncodeGdrClean = cs->sps->getGDREnabledFlag() && cs->pcv->isEncoder && ((cs->picHeader->getInGdrInterval() && cs->isClean(pu.Y().topRight(), CHANNEL_TYPE_LUMA)) || (cs->picHeader->getNumVerVirtualBoundaries() == 0));
 #endif
-    PU::getAffineMergeCand( pu, affineMergeCtx );
+    PU::getAffineMergeCand( pu, affineMergeCtx );//获得Merge候选模式
 
     if ( affineMergeCtx.numValidMergeCand <= 0 )
     {
@@ -3335,6 +3375,7 @@ void EncCu::xCheckRDCostAffineMerge2Nx2N( CodingStructure *&tempCS, CodingStruct
     static_vector<double, AFFINE_MRG_MAX_NUM_CANDS> candCostList;
 
     // 1. Pass: get SATD-cost for selected candidates and reduce their count
+    //使用 SATD缩减merge列表
     if ( !bestIsSkip )
     {
       RdModeList.clear();
@@ -3359,7 +3400,7 @@ void EncCu::xCheckRDCostAffineMerge2Nx2N( CodingStructure *&tempCS, CodingStruct
       m_pcRdCost->setDistParam( distParam, tempCS->getOrgBuf().Y(), m_acMergeBuffer[0].Y(), sps.getBitDepth( CHANNEL_TYPE_LUMA ), COMPONENT_Y, bUseHadamard );
 
       const UnitArea localUnitArea( tempCS->area.chromaFormat, Area( 0, 0, tempCS->area.Y().width, tempCS->area.Y().height ) );
-
+      //遍历可用的候选merge模式
       for ( uint32_t uiMergeCand = 0; uiMergeCand < affineMergeCtx.numValidMergeCand; uiMergeCand++ )
       {
         acMergeBuffer[uiMergeCand] = m_acMergeBuffer[uiMergeCand].getBuf( localUnitArea );
@@ -3435,6 +3476,7 @@ void EncCu::xCheckRDCostAffineMerge2Nx2N( CodingStructure *&tempCS, CodingStruct
       }
 
       // Try to limit number of candidates using SATD-costs
+      //SATD比之前的结果的1.25倍还大 说明这个失真较多 直接去除 不进行RDO优化
       for ( uint32_t i = 1; i < uiNumMrgSATDCand; i++ )
       {
         if ( candCostList[i] > MRG_FAST_RATIO * candCostList[0] )
@@ -3650,7 +3692,7 @@ void EncCu::xCheckRDCostIBCModeMerge2Nx2N(CodingStructure *&tempCS, CodingStruct
     pu.mmvdMergeFlag = false;
     pu.regularMergeFlag = false;
     cu.geoFlag = false;
-    PU::getIBCMergeCandidates(pu, mergeCtx);
+    PU::getIBCMergeCandidates(pu, mergeCtx);//获取merge列表
 #if GDR_ENABLED
     gdrClean = tempCS->isClean(pu.Y().topRight(), CHANNEL_TYPE_LUMA) || tempCS->picHeader->getNumVerVirtualBoundaries() == 0;
 #endif
@@ -3713,6 +3755,7 @@ void EncCu::xCheckRDCostIBCModeMerge2Nx2N(CodingStructure *&tempCS, CodingStruct
     Picture *     refPic         = pu.cu->slice->getPic();
     const CPelBuf refBuf         = refPic->getRecoBuf(pu.blocks[COMPONENT_Y]);
     const Pel *   piRefSrch      = refBuf.buf;
+    //LMCS相关的映射处理
     if (tempCS->slice->getLmcsEnabledFlag() && m_pcReshape->getCTUFlag())
     {
       const CompArea &area = cu.blocks[COMPONENT_Y];
@@ -3731,6 +3774,7 @@ void EncCu::xCheckRDCostIBCModeMerge2Nx2N(CodingStructure *&tempCS, CodingStruct
     const UnitArea localUnitArea(tempCS->area.chromaFormat,
                                  Area(0, 0, tempCS->area.Y().width, tempCS->area.Y().height));
     int            numValidBv = mergeCtx.numValidMergeCand;
+    //遍历merge列表
     for (unsigned int mergeCand = 0; mergeCand < mergeCtx.numValidMergeCand; mergeCand++)
     {
       mergeCtx.setMergeInfo(pu, mergeCand);   // set bv info in merge mode
@@ -3743,7 +3787,7 @@ void EncCu::xCheckRDCostIBCModeMerge2Nx2N(CodingStructure *&tempCS, CodingStruct
       const unsigned int lcuWidth  = pu.cs->slice->getSPS()->getMaxCUWidth();
       int                xPred     = pu.bv.getHor();
       int                yPred     = pu.bv.getVer();
-
+      //检测是否合法BV
       if (!m_pcInterSearch->searchBv(pu, cuPelX, cuPelY, roiWidth, roiHeight, picWidth, picHeight, xPred, yPred,
                                      lcuWidth))   // not valid bv derived
       {
@@ -3800,6 +3844,7 @@ void EncCu::xCheckRDCostIBCModeMerge2Nx2N(CodingStructure *&tempCS, CodingStruct
     }
 
     // Try to limit number of candidates using SATD-costs
+    //远大于已经有的 除去
     if (numValidBv)
     {
       numMrgSATDCand = numValidBv;
@@ -3814,6 +3859,7 @@ void EncCu::xCheckRDCostIBCModeMerge2Nx2N(CodingStructure *&tempCS, CodingStruct
     }
     else
     {
+      //merge 列表为0
       tempCS->dist         = 0;
       tempCS->fracBits     = 0;
       tempCS->cost         = MAX_DOUBLE;
@@ -3828,6 +3874,7 @@ void EncCu::xCheckRDCostIBCModeMerge2Nx2N(CodingStructure *&tempCS, CodingStruct
   const unsigned int iteration = 2;
   m_bestModeUpdated = tempCS->useDbCost = bestCS->useDbCost = false;
   // 2. Pass: check candidates using full RD test
+  //两轮 第一轮为merge 第二轮为skip
   for (unsigned int numResidualPass = 0; numResidualPass < iteration; numResidualPass++)
   {
     for (unsigned int mrgHADIdx = 0; mrgHADIdx < numMrgSATDCand; mrgHADIdx++)
@@ -4008,6 +4055,7 @@ void EncCu::xCheckRDCostIBCMode(CodingStructure *&tempCS, CodingStructure *&best
 
   pu.interDir               = 1;             // use list 0 for IBC mode
   pu.refIdx[REF_PIC_LIST_0] = MAX_NUM_REF;   // last idx in the list
+  //predIBCSearch进行运动搜索
   bool bValid =
     m_pcInterSearch->predIBCSearch(cu, partitioner, m_ctuIbcSearchRangeX, m_ctuIbcSearchRangeY, m_ibcHashMap);
 
@@ -4060,12 +4108,14 @@ void EncCu::xCheckRDCostIBCMode(CodingStructure *&tempCS, CodingStructure *&best
 
 void EncCu::xCheckRDCostInter( CodingStructure *&tempCS, CodingStructure *&bestCS, Partitioner &partitioner, const EncTestMode& encTestMode )
 {
+  //重置tempCS
   tempCS->initStructData( encTestMode.qp );
 
-
+  //重置m_affineModeSelected，为true表示affine被选为最佳模式
   m_pcInterSearch->setAffineModeSelected(false);
 
   m_pcInterSearch->resetBufferedUniMotions();
+  //表示需要测试的BCW权重的次数 BCW_NUM=5
   int bcwLoopNum = (tempCS->slice->isInterB() ? BCW_NUM : 1);
   bcwLoopNum = (tempCS->sps->getUseBcw() ? bcwLoopNum : 1);
 
@@ -4078,9 +4128,10 @@ void EncCu::xCheckRDCostInter( CodingStructure *&tempCS, CodingStructure *&bestC
   double equBcwCost = MAX_DOUBLE;
 
   m_bestModeUpdated = tempCS->useDbCost = bestCS->useDbCost = false;
-
+  //遍历BCW的5种权重，
   for( int bcwLoopIdx = 0; bcwLoopIdx < bcwLoopNum; bcwLoopIdx++ )
   {
+    //默认开启 CU目前的测试的模式为帧间时，只测试均等权重和最佳BCW权重
     if( m_pcEncCfg->getUseBcwFast() )
     {
       auto blkCache = dynamic_cast< CacheBlkInfoCtrl* >(m_modeCtrl);
@@ -4089,13 +4140,14 @@ void EncCu::xCheckRDCostInter( CodingStructure *&tempCS, CodingStructure *&bestC
       {
         bool isBestInter = blkCache->getInter(bestCS->area);
         uint8_t bestBcwIdx = blkCache->getBcwIdx(bestCS->area);
-
+        //default为2 也就是均等权重 
         if( isBestInter && g_BcwSearchOrder[bcwLoopIdx] != BCW_DEFAULT && g_BcwSearchOrder[bcwLoopIdx] != bestBcwIdx )
         {
           continue;
         }
       }
     }
+    //如果不是Low delay 只测试BCW的三种全权重 跳过另外两种
     if( !tempCS->slice->getCheckLDC() )
     {
       if( bcwLoopIdx != 0 && bcwLoopIdx != 3 && bcwLoopIdx != 4 )
@@ -4124,6 +4176,7 @@ void EncCu::xCheckRDCostInter( CodingStructure *&tempCS, CodingStructure *&bestC
 #if GDR_ENABLED
   const bool isEncodeGdrClean = tempCS->sps->getGDREnabledFlag() && tempCS->pcv->isEncoder && ((tempCS->picHeader->getInGdrInterval() && tempCS->isClean(cu.Y().topRight(), CHANNEL_TYPE_LUMA)) || (tempCS->picHeader->getNumVerVirtualBoundaries() == 0));
 #endif
+  //AMVP帧间预测
     m_pcInterSearch->predInterSearch(cu, partitioner);
 
     bcwIdx = CU::getValidBcwIdx(cu);
@@ -4133,7 +4186,7 @@ void EncCu::xCheckRDCostInter( CodingStructure *&tempCS, CodingStructure *&bestC
       continue;
     }
     CHECK(!(testBcw || (!testBcw && bcwIdx == BCW_DEFAULT)), " !( bTestBcw || (!bTestBcw && bcwIdx == BCW_DEFAULT ) )");
-
+    //为true表示不开启BCW时最佳模式为单向预测
     bool isEqualUni = false;
     if (m_pcEncCfg->getUseBcwFast())
     {
@@ -4145,6 +4198,8 @@ void EncCu::xCheckRDCostInter( CodingStructure *&tempCS, CodingStructure *&bestC
 
 #if GDR_ENABLED
     // 2.0 xCheckRDCostInter: check residual (compare with bestCS)
+    //GRD Gradual Decoder Refresh  把一个I帧分成多片 
+    //https://soaringlee.blog.csdn.net/article/details/108441044
     if (isEncodeGdrClean)
     {
       bool isClean = true;
@@ -4224,6 +4279,10 @@ void EncCu::xCheckRDCostInter( CodingStructure *&tempCS, CodingStructure *&bestC
 #else
     xEncodeInterResidual(tempCS, bestCS, partitioner, encTestMode, 0, 0, &equBcwCost);
 #endif
+    //上面函数 进行RDcost计算 抉择出最佳帧间模式，
+    //还包含对SBT的RD决策过程,
+      //实际RDcost计算是通过调用encodeResAndCalcRdInterCU。
+      //encodeResAndCalcRdInterCU包含对MTS的RD决策过程
 
 #if GDR_ENABLED
   if (g_BcwSearchOrder[bcwLoopIdx] == BCW_DEFAULT && bestCS->cus.size() > 0)
@@ -4240,11 +4299,12 @@ void EncCu::xCheckRDCostInter( CodingStructure *&tempCS, CodingStructure *&bestC
 
     double skipTH = MAX_DOUBLE;
     skipTH        = (m_pcEncCfg->getUseBcwFast() ? 1.05 : MAX_DOUBLE);
+    //不开启BCW时的RDcost如果超过之前的最佳RDcost的1.05倍，就跳过之后BCW的权重测试
     if (equBcwCost > curBestCost * skipTH)
     {
       break;
     }
-
+    //当序列中只有第一帧是I帧时，如果不开启BCW时最佳模式为单向预测，就跳过之后BCW的权重测试
     if (m_pcEncCfg->getUseBcwFast())
     {
       if (isEqualUni == true && m_pcEncCfg->getIntraPeriod() == -1)
@@ -4252,6 +4312,7 @@ void EncCu::xCheckRDCostInter( CodingStructure *&tempCS, CodingStructure *&bestC
         break;
       }
     }
+    //满足一定条件，就跳过之后BCW的权重测试
     if (g_BcwSearchOrder[bcwLoopIdx] == BCW_DEFAULT && xIsBcwSkip(cu) && m_pcEncCfg->getUseBcwFast())
     {
       break;
@@ -4262,13 +4323,14 @@ void EncCu::xCheckRDCostInter( CodingStructure *&tempCS, CodingStructure *&bestC
     xCalDebCost( *bestCS, partitioner );
   }
 }
-
+//xCheckRDCostInter和他差别不大
 bool EncCu::xCheckRDCostInterIMV(CodingStructure *&tempCS, CodingStructure *&bestCS, Partitioner &partitioner, const EncTestMode& encTestMode, double &bestIntPelCost)
 {
   int iIMV = int( ( encTestMode.opts & ETO_IMV ) >> ETO_IMV_SHIFT );
   m_pcInterSearch->setAffineModeSelected(false);
   // Only Half-Pel, int-Pel, 4-Pel and fast 4-Pel allowed
   CHECK(iIMV < 1 || iIMV > 4, "Unsupported IMV Mode");
+  //是否在测试半像素精度
   const bool testAltHpelFilter = iIMV == 4;
   // Fast 4-Pel Mode
 
@@ -4291,7 +4353,7 @@ bool EncCu::xCheckRDCostInterIMV(CodingStructure *&tempCS, CodingStructure *&bes
   bool validMode = false;
   double curBestCost = bestCS->cost;
   double equBcwCost = MAX_DOUBLE;
-
+  //CU加权的双向预测
   for( int bcwLoopIdx = 0; bcwLoopIdx < bcwLoopNum; bcwLoopIdx++ )
   {
     if( m_pcEncCfg->getUseBcwFast() )
@@ -4317,7 +4379,7 @@ bool EncCu::xCheckRDCostInterIMV(CodingStructure *&tempCS, CodingStructure *&bes
         continue;
       }
     }
-
+    //如果当前帧是low - delay，只能测试不开启AMVR时最好的两次RDcost下的BCW权重还有默认权重
     if( m_pcEncCfg->getUseBcwFast() && tempCS->slice->getCheckLDC() && g_BcwSearchOrder[bcwLoopIdx] != BCW_DEFAULT
       && (m_bestBcwIdx[0] >= 0 && g_BcwSearchOrder[bcwLoopIdx] != m_bestBcwIdx[0])
       && (m_bestBcwIdx[1] >= 0 && g_BcwSearchOrder[bcwLoopIdx] != m_bestBcwIdx[1]))
@@ -4325,194 +4387,196 @@ bool EncCu::xCheckRDCostInterIMV(CodingStructure *&tempCS, CodingStructure *&bes
       continue;
     }
 
-  CodingUnit &cu = tempCS->addCU( tempCS->area, partitioner.chType );
+    CodingUnit &cu = tempCS->addCU( tempCS->area, partitioner.chType );
 
-  partitioner.setCUData( cu );
-  cu.slice            = tempCS->slice;
-  cu.tileIdx          = tempCS->pps->getTileIdx( tempCS->area.lumaPos() );
-  cu.skip             = false;
-  cu.mmvdSkip = false;
-//cu.affine
-  cu.predMode         = MODE_INTER;
-  cu.chromaQpAdj      = m_cuChromaQpOffsetIdxPlus1;
-  cu.qp               = encTestMode.qp;
+    partitioner.setCUData( cu );
+    cu.slice            = tempCS->slice;
+    cu.tileIdx          = tempCS->pps->getTileIdx( tempCS->area.lumaPos() );
+    cu.skip             = false;
+    cu.mmvdSkip = false;
+  //cu.affine
+    cu.predMode         = MODE_INTER;
+    cu.chromaQpAdj      = m_cuChromaQpOffsetIdxPlus1;
+    cu.qp               = encTestMode.qp;
 
-  CU::addPUs( cu );
+    CU::addPUs( cu );
 
-#if GDR_ENABLED
-    const bool isEncodeGdrClean = tempCS->sps->getGDREnabledFlag() && tempCS->pcv->isEncoder && ((tempCS->picHeader->getInGdrInterval() && tempCS->isClean(cu.Y().topRight(), CHANNEL_TYPE_LUMA)) || (tempCS->picHeader->getNumVerVirtualBoundaries() == 0));
-#endif
-  if (testAltHpelFilter)
-  {
-    cu.imv = IMV_HPEL;
-  }
-  else
-  {
-    cu.imv = iIMV == 1 ? IMV_FPEL : IMV_4PEL;
-  }
-
-  bool testBcw;
-  uint8_t bcwIdx;
-  bool affineAmvrEanbledFlag = !testAltHpelFilter && cu.slice->getSPS()->getAffineAmvrEnabledFlag();
-
-  cu.BcwIdx = g_BcwSearchOrder[bcwLoopIdx];
-  bcwIdx = cu.BcwIdx;
-  testBcw = (bcwIdx != BCW_DEFAULT);
-
-  cu.firstPU->interDir = 10;
-
-  m_pcInterSearch->predInterSearch( cu, partitioner );
-
-  if ( cu.firstPU->interDir <= 3 )
-  {
-    bcwIdx = CU::getValidBcwIdx(cu);
-  }
-  else
-  {
-    return false;
-  }
-
-  if( m_pcEncCfg->getMCTSEncConstraint() && ( ( cu.firstPU->refIdx[L0] < 0 && cu.firstPU->refIdx[L1] < 0 ) || ( !( MCTSHelper::checkMvBufferForMCTSConstraint( *cu.firstPU ) ) ) ) )
-  {
-    // Do not use this mode
-    tempCS->initStructData( encTestMode.qp );
-    continue;
-  }
-  if( testBcw && bcwIdx == BCW_DEFAULT ) // Enabled Bcw but the search results is uni.
-  {
-    tempCS->initStructData(encTestMode.qp);
-    continue;
-  }
-  CHECK(!(testBcw || (!testBcw && bcwIdx == BCW_DEFAULT)), " !( bTestBcw || (!bTestBcw && bcwIdx == BCW_DEFAULT ) )");
-
-  bool isEqualUni = false;
-  if( m_pcEncCfg->getUseBcwFast() )
-  {
-    if( cu.firstPU->interDir != 3 && testBcw == 0 )
+  #if GDR_ENABLED
+      const bool isEncodeGdrClean = tempCS->sps->getGDREnabledFlag() && tempCS->pcv->isEncoder && ((tempCS->picHeader->getInGdrInterval() && tempCS->isClean(cu.Y().topRight(), CHANNEL_TYPE_LUMA)) || (tempCS->picHeader->getNumVerVirtualBoundaries() == 0));
+  #endif
+      //非affine下imv可以为0，1，2，3，分别为1/4，1，4，1/2像素精度；
+      //affine下imv可以为0，1，2，分别为1/4，1/16，1像素精度
+    if (testAltHpelFilter)
     {
-      isEqualUni = true;
+      cu.imv = IMV_HPEL;
     }
-  }
-
-  if ( !CU::hasSubCUNonZeroMVd( cu ) && !CU::hasSubCUNonZeroAffineMVd( cu ) )
-  {
-    if (m_modeCtrl->useModeResult(encTestModeBase, tempCS, partitioner))
+    else
     {
-      std::swap(tempCS, bestCS);
-      // store temp best CI for next CU coding
-      m_CurrCtx->best = m_CABACEstimator->getCtx();
+      cu.imv = iIMV == 1 ? IMV_FPEL : IMV_4PEL;
     }
-    if ( affineAmvrEanbledFlag )
+
+    bool testBcw;
+    uint8_t bcwIdx;
+    bool affineAmvrEanbledFlag = !testAltHpelFilter && cu.slice->getSPS()->getAffineAmvrEnabledFlag();
+
+    cu.BcwIdx = g_BcwSearchOrder[bcwLoopIdx];
+    bcwIdx = cu.BcwIdx;
+    testBcw = (bcwIdx != BCW_DEFAULT);
+
+    cu.firstPU->interDir = 10;
+    //AMVP
+    m_pcInterSearch->predInterSearch( cu, partitioner );
+
+    if ( cu.firstPU->interDir <= 3 )
     {
-      tempCS->initStructData( encTestMode.qp );
-      continue;
+      bcwIdx = CU::getValidBcwIdx(cu);
     }
     else
     {
       return false;
     }
-  }
 
-#if GDR_ENABLED
-  // 2.0 xCheckRDCostInter: check residual (compare with bestCS)
-  if (isEncodeGdrClean)
-  {
-    bool isClean = true;
-
-    if (cu.affine && cu.firstPU)
+    if( m_pcEncCfg->getMCTSEncConstraint() && ( ( cu.firstPU->refIdx[L0] < 0 && cu.firstPU->refIdx[L1] < 0 ) || ( !( MCTSHelper::checkMvBufferForMCTSConstraint( *cu.firstPU ) ) ) ) )
     {
-      bool L0ok = true, L1ok = true, L3ok = true;
+      // Do not use this mode
+      tempCS->initStructData( encTestMode.qp );
+      continue;
+    }
+    if( testBcw && bcwIdx == BCW_DEFAULT ) // Enabled Bcw but the search results is uni.
+    {
+      tempCS->initStructData(encTestMode.qp);
+      continue;
+    }
+    CHECK(!(testBcw || (!testBcw && bcwIdx == BCW_DEFAULT)), " !( bTestBcw || (!bTestBcw && bcwIdx == BCW_DEFAULT ) )");
 
-      L0ok = L0ok && cu.firstPU->mvAffiSolid[0][0] && cu.firstPU->mvAffiSolid[0][1] && cu.firstPU->mvAffiSolid[0][2];
-      L0ok = L0ok && cu.firstPU->mvAffiValid[0][0] && cu.firstPU->mvAffiValid[0][1] && cu.firstPU->mvAffiValid[0][2];
-
-      L1ok = L1ok && cu.firstPU->mvAffiSolid[1][0] && cu.firstPU->mvAffiSolid[1][1] && cu.firstPU->mvAffiSolid[1][2];
-      L1ok = L1ok && cu.firstPU->mvAffiValid[1][0] && cu.firstPU->mvAffiValid[1][1] && cu.firstPU->mvAffiValid[1][2];
-
-      L3ok = L0ok && L1ok;
-
-      if (cu.firstPU->interDir == 1 && !L0ok)
+    bool isEqualUni = false;
+    if( m_pcEncCfg->getUseBcwFast() )
+    {
+      if( cu.firstPU->interDir != 3 && testBcw == 0 )
       {
-        isClean = false;
-      }
-      if (cu.firstPU->interDir == 2 && !L1ok)
-      {
-        isClean = false;
-      }
-      if (cu.firstPU->interDir == 3 && !L3ok)
-      {
-        isClean = false;
+        isEqualUni = true;
       }
     }
-    else if (cu.firstPU)
-    {
-      bool L0ok = cu.firstPU->mvSolid[0] && cu.firstPU->mvValid[0];
-      bool L1ok = cu.firstPU->mvSolid[1] && cu.firstPU->mvValid[1];
-      bool L3ok = L0ok && L1ok;
 
-      if (cu.firstPU->interDir == 1 && !L0ok)
+    if ( !CU::hasSubCUNonZeroMVd( cu ) && !CU::hasSubCUNonZeroAffineMVd( cu ) )
+    {
+      if (m_modeCtrl->useModeResult(encTestModeBase, tempCS, partitioner))
+      {
+        std::swap(tempCS, bestCS);
+        // store temp best CI for next CU coding
+        m_CurrCtx->best = m_CABACEstimator->getCtx();
+      }
+      if ( affineAmvrEanbledFlag )
+      {
+        tempCS->initStructData( encTestMode.qp );
+        continue;
+      }
+      else
+      {
+        return false;
+      }
+    }
+
+  #if GDR_ENABLED
+    // 2.0 xCheckRDCostInter: check residual (compare with bestCS)
+    if (isEncodeGdrClean)
+    {
+      bool isClean = true;
+
+      if (cu.affine && cu.firstPU)
+      {
+        bool L0ok = true, L1ok = true, L3ok = true;
+
+        L0ok = L0ok && cu.firstPU->mvAffiSolid[0][0] && cu.firstPU->mvAffiSolid[0][1] && cu.firstPU->mvAffiSolid[0][2];
+        L0ok = L0ok && cu.firstPU->mvAffiValid[0][0] && cu.firstPU->mvAffiValid[0][1] && cu.firstPU->mvAffiValid[0][2];
+
+        L1ok = L1ok && cu.firstPU->mvAffiSolid[1][0] && cu.firstPU->mvAffiSolid[1][1] && cu.firstPU->mvAffiSolid[1][2];
+        L1ok = L1ok && cu.firstPU->mvAffiValid[1][0] && cu.firstPU->mvAffiValid[1][1] && cu.firstPU->mvAffiValid[1][2];
+
+        L3ok = L0ok && L1ok;
+
+        if (cu.firstPU->interDir == 1 && !L0ok)
+        {
+          isClean = false;
+        }
+        if (cu.firstPU->interDir == 2 && !L1ok)
+        {
+          isClean = false;
+        }
+        if (cu.firstPU->interDir == 3 && !L3ok)
+        {
+          isClean = false;
+        }
+      }
+      else if (cu.firstPU)
+      {
+        bool L0ok = cu.firstPU->mvSolid[0] && cu.firstPU->mvValid[0];
+        bool L1ok = cu.firstPU->mvSolid[1] && cu.firstPU->mvValid[1];
+        bool L3ok = L0ok && L1ok;
+
+        if (cu.firstPU->interDir == 1 && !L0ok)
+        {
+          isClean = false;
+        }
+        if (cu.firstPU->interDir == 2 && !L1ok)
+        {
+          isClean = false;
+        }
+        if (cu.firstPU->interDir == 3 && !L3ok)
+        {
+          isClean = false;
+        }
+      }
+      else
       {
         isClean = false;
       }
-      if (cu.firstPU->interDir == 2 && !L1ok)
+
+      if (isClean)
       {
-        isClean = false;
-      }
-      if (cu.firstPU->interDir == 3 && !L3ok)
-      {
-        isClean = false;
+        xEncodeInterResidual(tempCS, bestCS, partitioner, encTestMode, 0
+          , 0
+          , &equBcwCost
+        );
       }
     }
     else
-    {
-      isClean = false;
-    }
-
-    if (isClean)
     {
       xEncodeInterResidual(tempCS, bestCS, partitioner, encTestMode, 0
         , 0
         , &equBcwCost
       );
     }
-  }
-  else
-  {
-    xEncodeInterResidual(tempCS, bestCS, partitioner, encTestMode, 0
-      , 0
-      , &equBcwCost
-    );
-  }
 #else
-  xEncodeInterResidual(tempCS, bestCS, partitioner, encTestModeBase, 0, 0, &equBcwCost);
+    xEncodeInterResidual(tempCS, bestCS, partitioner, encTestModeBase, 0, 0, &equBcwCost);
 #endif
 
-  if( cu.imv == IMV_FPEL && tempCS->cost < bestIntPelCost )
-  {
-    bestIntPelCost = tempCS->cost;
-  }
-  tempCS->initStructData(encTestMode.qp);
+    if( cu.imv == IMV_FPEL && tempCS->cost < bestIntPelCost )
+    {
+      bestIntPelCost = tempCS->cost;
+    }
+    tempCS->initStructData(encTestMode.qp);
 
-  double skipTH = MAX_DOUBLE;
-  skipTH = (m_pcEncCfg->getUseBcwFast() ? 1.05 : MAX_DOUBLE);
-  if( equBcwCost > curBestCost * skipTH )
-  {
-    break;
-  }
-
-  if( m_pcEncCfg->getUseBcwFast() )
-  {
-    if( isEqualUni == true && m_pcEncCfg->getIntraPeriod() == -1 )
+    double skipTH = MAX_DOUBLE;
+    skipTH = (m_pcEncCfg->getUseBcwFast() ? 1.05 : MAX_DOUBLE);
+    if( equBcwCost > curBestCost * skipTH )
     {
       break;
     }
-  }
-  if( g_BcwSearchOrder[bcwLoopIdx] == BCW_DEFAULT && xIsBcwSkip(cu) && m_pcEncCfg->getUseBcwFast() )
-  {
-    break;
-  }
-  validMode = true;
- } // for( UChar bcwLoopIdx = 0; bcwLoopIdx < bcwLoopNum; bcwLoopIdx++ )
+
+    if( m_pcEncCfg->getUseBcwFast() )
+    {
+      if( isEqualUni == true && m_pcEncCfg->getIntraPeriod() == -1 )
+      {
+        break;
+      }
+    }
+    if( g_BcwSearchOrder[bcwLoopIdx] == BCW_DEFAULT && xIsBcwSkip(cu) && m_pcEncCfg->getUseBcwFast() )
+    {
+      break;
+    }
+    validMode = true;
+  } // for( UChar bcwLoopIdx = 0; bcwLoopIdx < bcwLoopNum; bcwLoopIdx++ )
 
   if ( m_bestModeUpdated && bestCS->cost != MAX_DOUBLE )
   {
@@ -4806,8 +4870,10 @@ void EncCu::xEncodeInterResidual(   CodingStructure *&tempCS
     }
   }
   const bool mtsAllowed = tempCS->sps->getUseInterMTS() && CU::isInter( *cu ) && partitioner.currArea().lwidth() <= MTS_INTER_MAX_CU_SIZE && partitioner.currArea().lheight() <= MTS_INTER_MAX_CU_SIZE;
-  uint8_t sbtAllowed = cu->checkAllowedSbt();
+  uint8_t sbtAllowed = cu->checkAllowedSbt();//是否允许使用SBT，判断当前预测模式、CU尺寸是否符合要求
+  //SBT 对一个CU残差的一个子部分进行变换处理
   //SBT resolution-dependent fast algorithm: not try size-64 SBT in RDO for low-resolution sequences (now resolution below HD)
+  // SBT分辨率相关快速算法：对于低分辨率序列（现在分辨率低于HD），不要尝试RDO中的size-64sbt
   if( tempCS->pps->getPicWidthInLumaSamples() < (uint32_t)m_pcEncCfg->getSBTFast64WidthTh() )
   {
     sbtAllowed = ((cu->lwidth() > 32 || cu->lheight() > 32)) ? 0 : sbtAllowed;

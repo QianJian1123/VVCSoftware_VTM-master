@@ -678,7 +678,7 @@ void InterPrediction::xPredInterBlk ( const ComponentID& compID, const Predictio
   JVET_J0090_SET_REF_PICTURE( refPic, compID );
   const ChromaFormat  chFmt = pu.chromaFormat;
   const bool          rndRes = !bi;
-
+  //运动矢量存储精度相关
   int shiftHor = MV_FRACTIONAL_BITS_INTERNAL + ::getComponentScaleX(compID, chFmt);
   int shiftVer = MV_FRACTIONAL_BITS_INTERNAL + ::getComponentScaleY(compID, chFmt);
 
@@ -690,7 +690,7 @@ void InterPrediction::xPredInterBlk ( const ComponentID& compID, const Predictio
   }
 
   bool useAltHpelIf = pu.cu->imv == IMV_HPEL;
-
+  //可能是缩放相关的
   if( !isIBC && xPredInterBlkRPR( scalingRatio, *pu.cs->pps, CompArea( compID, chFmt, pu.blocks[compID], Size( dstPic.bufs[compID].width, dstPic.bufs[compID].height ) ), refPic, mv, dstPic.bufs[compID].buf, dstPic.bufs[compID].stride, bi, wrapRef, clpRng, 0, useAltHpelIf ) )
   {
     CHECK( bilinearMC, "DMVR should be disabled with RPR" );
@@ -757,7 +757,7 @@ void InterPrediction::xPredInterBlk ( const ComponentID& compID, const Predictio
       dstBuf.stride = width;
       dstBuf.buf    = m_filteredBlockTmp[2 + m_iRefListIdx][compID] + 2 * dstBuf.stride + 2;
     }
-
+    //根据精度进行滤波等操作
     if (yFrac == 0)
     {
       m_if.filterHor(compID, (Pel *) refBuf.buf, refBuf.stride, dstBuf.buf, dstBuf.stride, backupWidth, backupHeight,

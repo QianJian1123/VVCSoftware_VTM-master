@@ -1092,7 +1092,10 @@ void EncModeCtrlMTnoRQT::initCULevel( Partitioner &partitioner, const CodingStru
 
   const CodingUnit* cuLeft  = cs.getCU( cs.area.blocks[partitioner.chType].pos().offset( -1, 0 ), partitioner.chType );
   const CodingUnit* cuAbove = cs.getCU( cs.area.blocks[partitioner.chType].pos().offset( 0, -1 ), partitioner.chType );
-
+  //根据左上CU的存在情况以及QT划分深度情况决定 QT是否先于BT划分
+  //如果左与上至少一个存在 ，并且存在的CU深度大于当前QT深度
+  //都不存在，当前宽度当于（32*2^深度），且当前区域宽度大于最小QT尺寸 * 2
+  //则先做BT
   const bool qtBeforeBt = ( (  cuLeft  &&  cuAbove  && cuLeft ->qtDepth > partitioner.currQtDepth && cuAbove->qtDepth > partitioner.currQtDepth )
                          || (  cuLeft  && !cuAbove  && cuLeft ->qtDepth > partitioner.currQtDepth )
                          || ( !cuLeft  &&  cuAbove  && cuAbove->qtDepth > partitioner.currQtDepth )
@@ -1185,7 +1188,7 @@ void EncModeCtrlMTnoRQT::initCULevel( Partitioner &partitioner, const CodingStru
   }
   int minQP = baseQP;
   int maxQP = baseQP;
-
+  //亮度色度分量决策是否用IBC
   xGetMinMaxQP( minQP, maxQP, cs, partitioner, baseQP, *cs.sps, *cs.pps, CU_QUAD_SPLIT );
   bool checkIbc = true;
   if (partitioner.chType == CHANNEL_TYPE_CHROMA)
@@ -1198,7 +1201,8 @@ void EncModeCtrlMTnoRQT::initCULevel( Partitioner &partitioner, const CodingStru
 
   //////////////////////////////////////////////////////////////////////////
   // Add unit split modes
-
+  //堆栈 （QT） TTV TTH BTV BTH （QT） 不划分 其中QT顺序根据QtbeforeBt决定
+  //遍历QP，加入对应QP的块划分模式
   if( !cuECtx.get<bool>( QT_BEFORE_BT ) )
   {
     for( int qp = maxQP; qp >= minQP; qp-- )
@@ -1299,15 +1303,16 @@ void EncModeCtrlMTnoRQT::initCULevel( Partitioner &partitioner, const CodingStru
     // add intra modes
     if( tryIntraRdo )
     {
-    if (cs.slice->getSPS()->getPLTMode() && (partitioner.treeType != TREE_D || cs.slice->isIntra() || (cs.area.lwidth() == 4 && cs.area.lheight() == 4)) && getPltEnc())
-    {
-      m_ComprCUCtxList.back().testModes.push_back({ ETM_PALETTE, ETO_STANDARD, qp });
-    }
-    m_ComprCUCtxList.back().testModes.push_back( { ETM_INTRA, ETO_STANDARD, qp } );
-    if (cs.slice->getSPS()->getPLTMode() && partitioner.treeType == TREE_D && !cs.slice->isIntra() && !(cs.area.lwidth() == 4 && cs.area.lheight() == 4) && getPltEnc())
-    {
-      m_ComprCUCtxList.back().testModes.push_back({ ETM_PALETTE,  ETO_STANDARD, qp });
-    }
+      //4*4的帧内色度块（PLT Intra）  其他块：Intra PLT
+      if (cs.slice->getSPS()->getPLTMode() && (partitioner.treeType != TREE_D || cs.slice->isIntra() || (cs.area.lwidth() == 4 && cs.area.lheight() == 4)) && getPltEnc())
+      {
+        m_ComprCUCtxList.back().testModes.push_back({ ETM_PALETTE, ETO_STANDARD, qp });
+      }
+      m_ComprCUCtxList.back().testModes.push_back( { ETM_INTRA, ETO_STANDARD, qp } );
+      if (cs.slice->getSPS()->getPLTMode() && partitioner.treeType == TREE_D && !cs.slice->isIntra() && !(cs.area.lwidth() == 4 && cs.area.lheight() == 4) && getPltEnc())
+      {
+        m_ComprCUCtxList.back().testModes.push_back({ ETM_PALETTE,  ETO_STANDARD, qp });
+      }
     }
     // add ibc mode to intra path
     if (cs.sps->getIBCFlag() && checkIbc)
@@ -1321,6 +1326,7 @@ void EncModeCtrlMTnoRQT::initCULevel( Partitioner &partitioner, const CodingStru
   }
 
   // add first pass modes
+  // 非帧内 大小不为4×4 使用帧间
   if ( !m_slice->isIntra() && !( cs.area.lwidth() == 4 && cs.area.lheight() == 4 ) && tryInterRdo )
   {
     for( int qpLoop = maxQP; qpLoop >= minQP; qpLoop-- )
@@ -1339,6 +1345,7 @@ void EncModeCtrlMTnoRQT::initCULevel( Partitioner &partitioner, const CodingStru
       // add inter modes
       if( m_pcEncCfg->getUseEarlySkipDetection() )
       {
+        //使用快速 GEO SKIP AFFINE ME
         if( cs.sps->getUseGeo() && cs.slice->isInterB() )
         {
           m_ComprCUCtxList.back().testModes.push_back( { ETM_MERGE_GEO, ETO_STANDARD, qp } );
@@ -1352,6 +1359,7 @@ void EncModeCtrlMTnoRQT::initCULevel( Partitioner &partitioner, const CodingStru
       }
       else
       {
+        //不使用快速 ME GEO SKIP AFFINE
         m_ComprCUCtxList.back().testModes.push_back( { ETM_INTER_ME,    ETO_STANDARD, qp } );
         if( cs.sps->getUseGeo() && cs.slice->isInterB() )
         {
@@ -1363,6 +1371,7 @@ void EncModeCtrlMTnoRQT::initCULevel( Partitioner &partitioner, const CodingStru
           m_ComprCUCtxList.back().testModes.push_back( { ETM_AFFINE,    ETO_STANDARD, qp } );
         }
       }
+      //Hash
       if (m_pcEncCfg->getUseHashME())
       {
         int minSize = min(cs.area.lwidth(), cs.area.lheight());
@@ -1375,6 +1384,7 @@ void EncModeCtrlMTnoRQT::initCULevel( Partitioner &partitioner, const CodingStru
   }
 
   // ensure to skip unprobable modes
+  //如果第一个不可以 那么在nextMode函数内弹出 并检查下面的模式
   if( !tryModeMaster( m_ComprCUCtxList.back().testModes.back(), cs, partitioner ) )
   {
     nextMode( cs, partitioner );
@@ -1411,7 +1421,7 @@ bool EncModeCtrlMTnoRQT::tryMode( const EncTestMode& encTestmode, const CodingSt
   {
     return false;
   }
-
+  //检测冗余的划分情况 ，比如说BTV后两者都再BTH 这样和QT重复
   const PartSplit implicitSplit = partitioner.getImplicitSplit( cs );
   const bool isBoundary         = implicitSplit != CU_DONT_SPLIT;
 

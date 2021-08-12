@@ -553,7 +553,7 @@ bool TComHash::getBlockHashValue(const PelUnitBuf &curPicBuf, int width, int hei
 
   unsigned char* p = new unsigned char[length];
   uint32_t toHash[4];
-
+  //把一个块分为四个子块
   int block2x2Num = (width*height) >> 2;
 
   uint32_t* hashValueBuffer[2][2];
@@ -573,8 +573,9 @@ bool TComHash::getBlockHashValue(const PelUnitBuf &curPicBuf, int width, int hei
     for (int xPos = 0; xPos < width; xPos += 2)
     {
       int pos = (yPos >> 1)*subBlockInWidth + (xPos >> 1);
+      //把2×2的块的像素值变为一个一维数组 p
       TComHash::getPixelsIn1DCharArrayByBlock2x2(curPicBuf, p, xStart + xPos, yStart + yPos, bitDepths, includeChroma);
-
+      //使用p得到两种24位CRC的hash值
       hashValueBuffer[0][0][pos] = TComHash::getCRCValue1(p, length * sizeof(unsigned char));
       hashValueBuffer[1][0][pos] = TComHash::getCRCValue2(p, length * sizeof(unsigned char));
     }
@@ -624,7 +625,7 @@ bool TComHash::getBlockHashValue(const PelUnitBuf &curPicBuf, int width, int hei
     subBlockInHeight >>= 1;
   }
 
-  if (width != height)//currently support 1:2 or 2:1 block size
+  if (width != height)//currently support 1:2 or 2:1 block size如果满足1:2的关系 那么直接使用两个子块求Hash
   {
     CHECK(width != (height << 1) && (width << 1) != height, "Wrong")
     bool isHorizontal = width == (height << 1) ? true : false;

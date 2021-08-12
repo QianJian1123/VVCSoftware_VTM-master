@@ -643,6 +643,7 @@ bool EncLib::encodePrep( bool flush, PelStorage* pcPicYuvOrg, PelStorage* cPicYu
 bool EncLib::encode( const InputColourSpaceConversion snrCSC, std::list<PelUnitBuf*>& rcListPicYuvRecOut, int& iNumEncoded )
 {
   // compress GOP
+  // GOPÈë¿Ú
   m_cGOPEncoder.compressGOP( m_iPOCLast, m_iNumPicRcvd, m_cListPic, rcListPicYuvRecOut,
     false, false, snrCSC, m_printFrameMSE, m_printMSSSIM, false, m_picIdInGOP );
 

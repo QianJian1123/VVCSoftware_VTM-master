@@ -385,17 +385,17 @@ protected:
 
   typedef struct
   {
-    SearchRange searchRange;
-    const CPelBuf* pcPatternKey;
-    const Pel*  piRefY;
-    int         iRefStride;
+    SearchRange searchRange;//搜素范围
+    const CPelBuf* pcPatternKey;//匹配模板像素，orig
+    const Pel*  piRefY;//搜索区域的像素，即参考帧像素
+    int         iRefStride;//搜索区域像素的stride
     int         iBestX;
-    int         iBestY;
+    int         iBestY;//搜索范围内的最佳匹配点
     uint32_t        uiBestRound;
-    uint32_t        uiBestDistance;
+    uint32_t        uiBestDistance;//搜索点距起点的距离
     Distortion  uiBestSad;
-    uint8_t       ucPointNr;
-    int         subShiftMode;
+    uint8_t       ucPointNr;//搜索点相对于起始点的位置的标号
+    int         subShiftMode;//搜索模式
     unsigned    imvShift;
     bool        useAltHpelIf;
     bool        inCtuSearch;

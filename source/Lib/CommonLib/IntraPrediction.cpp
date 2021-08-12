@@ -1880,7 +1880,7 @@ void IntraPrediction::reorderPLT(CodingStructure& cs, Partitioner& partitioner, 
   {
     curPLTpred[idx] = false;
   }
-
+  //查找当前PLT中是否有复用PrePLT的
   for (int predidx = 0; predidx < cs.prevPLT.curPLTSize[compBegin]; predidx++)
   {
     bool match = false;
@@ -1903,7 +1903,7 @@ void IntraPrediction::reorderPLT(CodingStructure& cs, Partitioner& partitioner, 
         break;
       }
     }
-
+    //把复用的加入到curPLTtmp
     if (match)
     {
       cu.reuseflag[compBegin][predidx] = true;
@@ -1930,6 +1930,7 @@ void IntraPrediction::reorderPLT(CodingStructure& cs, Partitioner& partitioner, 
   cu.reusePLTSize[compBegin] = reusePLTSizetmp;
   for (int curidx = 0; curidx < cu.curPLTSize[compBegin]; curidx++)
   {
+    //如果不能复用（不能从pre中推导出来）再加入到curPLTtmp中 相当于curPLTtmp前面为可以复用的 后面不可 方便复用标志编码
     if (!curPLTpred[curidx])
     {
       if( cu.isLocalSepTree() )
@@ -1959,6 +1960,7 @@ void IntraPrediction::reorderPLT(CodingStructure& cs, Partitioner& partitioner, 
     }
   }
   assert(pltSizetmp == cu.curPLTSize[compBegin]);
+  //把curPLTtmp重新赋值给curPLT
   for (int curidx = 0; curidx < cu.curPLTSize[compBegin]; curidx++)
   {
     if( cu.isLocalSepTree() )

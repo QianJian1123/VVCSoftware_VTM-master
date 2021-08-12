@@ -4280,6 +4280,7 @@ void PU::getGeoMergeCandidates( const PredictionUnit &pu, MergeCtx& geoMrgCtx )
   CodingStructure &cs = *pu.cs;
   const bool isEncodeGdrClean = cs.sps->getGDREnabledFlag() && cs.pcv->isEncoder && ((cs.picHeader->getInGdrInterval() && cs.isClean(pu.Y().topRight(), CHANNEL_TYPE_LUMA)) || (cs.picHeader->getNumVerVirtualBoundaries() == 0));
 #endif
+  
   for (int32_t i = 0; i < GEO_MAX_NUM_UNI_CANDS; i++)
   {
     geoMrgCtx.BcwIdx[i] = BCW_DEFAULT;
@@ -4299,10 +4300,12 @@ void PU::getGeoMergeCandidates( const PredictionUnit &pu, MergeCtx& geoMrgCtx )
     geoMrgCtx.useAltHpelIf[i] = false;
   }
 
-  PU::getInterMergeCandidates(pu, tmpMergeCtx, 0);
-
+  PU::getInterMergeCandidates(pu, tmpMergeCtx, 0);//从相邻的cu获取候选列表
+  //遍历Merge列表
   for (int32_t i = 0; i < maxNumMergeCand; i++)
   {
+    //如果i为奇数，那么L1参考帧的merge cand的第i个作为 GEO的第i个
+    //如果i为偶数，那么从L0中
     int parity = i & 1;
     if( tmpMergeCtx.interDirNeighbours[i] & (0x01 + parity) )
     {

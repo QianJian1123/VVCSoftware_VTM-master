@@ -406,13 +406,13 @@ static const int GEO_MAX_NUM_CANDS = GEO_MAX_NUM_UNI_CANDS * (GEO_MAX_NUM_UNI_CA
 static const int GEO_MIN_CU_LOG2 =                                  3;
 static const int GEO_MAX_CU_LOG2 =                                  6;
 static const int GEO_MIN_CU_SIZE =               1 << GEO_MIN_CU_LOG2;
-static const int GEO_MAX_CU_SIZE =               1 << GEO_MAX_CU_LOG2;
+static const int GEO_MAX_CU_SIZE =               1 << GEO_MAX_CU_LOG2;//64
 static const int GEO_NUM_CU_SIZE = ( GEO_MAX_CU_LOG2 - GEO_MIN_CU_LOG2 ) + 1;
 static const int GEO_NUM_PARTITION_MODE =                          64;
 static const int GEO_NUM_ANGLES =                                  32;
 static const int GEO_NUM_DISTANCES =                                4;
 static const int GEO_NUM_PRESTORED_MASK =                           6;
-static const int GEO_WEIGHT_MASK_SIZE = 3 * (GEO_MAX_CU_SIZE >> 3) * 2 + GEO_MAX_CU_SIZE;
+static const int GEO_WEIGHT_MASK_SIZE = 3 * (GEO_MAX_CU_SIZE >> 3) * 2 + GEO_MAX_CU_SIZE;//48+64=112
 static const int GEO_MV_MASK_SIZE =         GEO_WEIGHT_MASK_SIZE >> 2;
 static const int GEO_MAX_TRY_WEIGHTED_SAD = 60;
 static const int GEO_MAX_TRY_WEIGHTED_SATD = 8;

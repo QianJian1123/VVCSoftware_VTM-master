@@ -1875,9 +1875,10 @@ void IntraSearch::PLTSearch(CodingStructure &cs, Partitioner& partitioner, Compo
   }
   cu.lastPLTSize[compBegin] = cs.prevPLT.curPLTSize[compBegin];
   //derive palette
-  derivePLTLossy(cs, partitioner, compBegin, numComp);
-  reorderPLT(cs, partitioner, compBegin, numComp);
+  derivePLTLossy(cs, partitioner, compBegin, numComp);//获得调色板
+  reorderPLT(cs, partitioner, compBegin, numComp);//把可复用的放在前面 不可放在后面
 
+  //下面做扫描优化 把部分用的少的项去除
   bool idxExist[MAXPLTSIZE + 1] = { false };
   preCalcPLTIndexRD(cs, partitioner, compBegin, numComp); // Pre-calculate distortions for each pixel
   double rdCost = MAX_DOUBLE;
@@ -2692,7 +2693,7 @@ void IntraSearch::derivePLTLossy(CodingStructure& cs, Partitioner& partitioner, 
   QpParam cQP(tu, compBegin);
   int qp = cQP.Qp(true) - 6*(channelBitDepth_L - 8);
   qp = (qp < 0) ? 0 : ((qp > 56) ? 56 : qp);
-  int errorLimit = g_paletteQuant[qp];
+  int errorLimit = g_paletteQuant[qp];//根据QP得到颜色项误差上限
 
   if (lossless)
   {
@@ -2701,7 +2702,7 @@ void IntraSearch::derivePLTLossy(CodingStructure& cs, Partitioner& partitioner, 
   uint32_t totalSize = height*width;
   SortingElement *pelList = new SortingElement[totalSize];
   SortingElement  element;
-  SortingElement *pelListSort = new SortingElement[MAXPLTSIZE + 1];
+  SortingElement *pelListSort = new SortingElement[MAXPLTSIZE + 1];//最大变成了32 HEVC是64
   uint32_t dictMaxSize = maxPltSize;
   uint32_t idx = 0;
   int last = -1;
@@ -2719,6 +2720,7 @@ void IntraSearch::derivePLTLossy(CodingStructure& cs, Partitioner& partitioner, 
         pY = (comp > 0 && compBegin == COMPONENT_Y) ? (y >> scaleY) : y;
         org[comp] = orgBuf[comp].at(pX, pY);
       }
+      //设置当前像素的element
       element.setAll(org, compBegin, numComp);
 
       ComponentID tmpCompBegin = compBegin;
@@ -2730,7 +2732,10 @@ void IntraSearch::derivePLTLossy(CodingStructure& cs, Partitioner& partitioner, 
         tmpCompBegin = COMPONENT_Y;
         tmpNumComp   = 1;
       }
+      //last==-1说明是第一项 所以bestSAD设置为max
+      //首先计算当前像素和上一个像素的SAD情况
       int besti = last, bestSAD = (last == -1) ? MAX_UINT : pelList[last].getSAD(element, cs.sps->getBitDepths(), tmpCompBegin, tmpNumComp, lossless);
+      //无损情况下
       if (lossless)
       {
         if (bestSAD)
@@ -2751,6 +2756,8 @@ void IntraSearch::derivePLTLossy(CodingStructure& cs, Partitioner& partitioner, 
       {
         if (bestSAD)
         {
+          //idx=0时不进行 
+          //比较当前项和调色板中所有项的SAD
           for (int i = idx - 1; i >= 0; i--)
           {
             uint32_t sad = pelList[i].getSAD(element, cs.sps->getBitDepths(), tmpCompBegin, tmpNumComp, lossless);
@@ -2766,6 +2773,7 @@ void IntraSearch::derivePLTLossy(CodingStructure& cs, Partitioner& partitioner, 
           }
         }
       }
+      //把当前项加入到调色板中某一项中
       if (besti >= 0 && pelList[besti].almostEqualData(element, errorLimit, cs.sps->getBitDepths(), tmpCompBegin, tmpNumComp, lossless))
       {
         pelList[besti].addElement(element, tmpCompBegin, tmpNumComp);
@@ -2773,6 +2781,7 @@ void IntraSearch::derivePLTLossy(CodingStructure& cs, Partitioner& partitioner, 
       }
       else
       {
+        //第一个像素时，直接把当前像素加入调色板
         pelList[idx].copyDataFrom(element, tmpCompBegin, tmpNumComp);
         for (int comp = tmpCompBegin; comp < (tmpCompBegin + tmpNumComp); comp++)
         {
@@ -2822,6 +2831,7 @@ void IntraSearch::derivePLTLossy(CodingStructure& cs, Partitioner& partitioner, 
   }
 
   //bubble sorting
+  //按照每一项的频次 冒泡排序
   dictMaxSize = 1;
   for (int i = 0; i < idx; i++)
   {
@@ -2853,7 +2863,7 @@ void IntraSearch::derivePLTLossy(CodingStructure& cs, Partitioner& partitioner, 
   const int plt_lambda_shift = (compBegin > 0) ? pcmShiftRight_C : pcmShiftRight_L;
   double    bitCost          = m_pcRdCost->getLambda() / (double) (1 << (2 * plt_lambda_shift)) * numColorBits;
   bool   reuseflag[MAXPLTPREDSIZE] = { false };
-  int    run;
+  int    run;//游程编码的长度
   double reuseflagCost;
   for (int i = 0; i < maxPltSize; i++)
   {
@@ -2876,6 +2886,7 @@ void IntraSearch::derivePLTLossy(CodingStructure& cs, Partitioner& partitioner, 
       int best = -1;
       if( errorLimit )
       {
+        //计算均方差
         double pal[MAX_NUM_COMPONENT], err = 0.0, bestCost = 0.0;
         for( int comp = tmpCompBegin; comp < (tmpCompBegin + tmpNumComp); comp++ )
         {
@@ -2891,7 +2902,9 @@ void IntraSearch::derivePLTLossy(CodingStructure& cs, Partitioner& partitioner, 
           }
         }
         bestCost += bitCost;
-
+        //根据codingstructure中保存的之前的PLT对前面生成的PLT进行优化 
+        //使用reuseflag标识对之前PLT的复用
+        //在Pre中找curElement相近或相同的项
         for( int t = 0; t < cs.prevPLT.curPLTSize[compBegin]; t++ )
         {
           double cost = 0.0;
@@ -2908,6 +2921,7 @@ void IntraSearch::derivePLTLossy(CodingStructure& cs, Partitioner& partitioner, 
             }
           }
           run = 0;
+          //寻找能否复用
           for (int t2 = t; t2 >= 0; t2--)
           {
             if (!reuseflag[t2])
@@ -2919,6 +2933,7 @@ void IntraSearch::derivePLTLossy(CodingStructure& cs, Partitioner& partitioner, 
               break;
             }
           }
+          //不能复用的标志 需要花费的bit （run个0）
           reuseflagCost = m_pcRdCost->getLambda() / (double)(1 << (2 * plt_lambda_shift)) * getEpExGolombNumBins(run ? run + 1 : run, 0);
           cost += reuseflagCost;
 
@@ -2937,7 +2952,7 @@ void IntraSearch::derivePLTLossy(CodingStructure& cs, Partitioner& partitioner, 
           reuseflag[best] = true;
         }
       }
-
+      //去重
       bool duplicate = false;
       if( pelListSort[i].getCnt(MAX_NUM_COMPONENT) == 1 && best == -1 )
       {
