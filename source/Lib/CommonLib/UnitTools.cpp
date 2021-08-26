@@ -868,7 +868,7 @@ bool PU::addMergeHMVPCand(const CodingStructure &cs, MergeCtx &mrgCtx, const int
 {
   const Slice& slice = *cs.slice;
   MotionInfo miNeighbor;
-
+  //在LUT内找
   auto &lut = ibcFlag ? cs.motionLut.lutIbc : cs.motionLut.lut;
   int num_avai_candInLUT = (int)lut.size();
 
@@ -1061,6 +1061,8 @@ void PU::getIBCMergeCandidates(const PredictionUnit &pu, MergeCtx& mrgCtx, const
       , allCandSolidInAbove
     );
 #else
+    //历史BV
+    //bFound 如果尺寸够了Weitrue
     bool bFound = addMergeHMVPCand(cs, mrgCtx, mrgCandIdx, maxNumMergeCand, cnt, isAvailableA1, miLeft, isAvailableB1,
                                    miAbove, true, isGt4x4);
 #endif
@@ -1070,7 +1072,7 @@ void PU::getIBCMergeCandidates(const PredictionUnit &pu, MergeCtx& mrgCtx, const
       return;
     }
   }
-
+  //填0BV
     while (cnt < maxNumMergeCand)
     {
       mrgCtx.mvFieldNeighbours[cnt * 2].setMvField(Mv(0, 0), MAX_NUM_REF);
@@ -1413,7 +1415,7 @@ void PU::getInterMergeCandidates( const PredictionUnit &pu, MergeCtx& mrgCtx,
   {
     return;
   }
-
+  //TMVP
   if (slice.getPicHeader()->getEnableTMVPFlag() && (pu.lumaSize().width + pu.lumaSize().height > 12))
   {
     //>> MTK colocated-RightBottom
@@ -1529,7 +1531,7 @@ void PU::getInterMergeCandidates( const PredictionUnit &pu, MergeCtx& mrgCtx,
   {
     return;
   }
-
+  //History MVP
   int maxNumMergeCandMin1 = maxNumMergeCand - 1;
   if (cnt != maxNumMergeCandMin1)
   {
@@ -1551,7 +1553,8 @@ void PU::getInterMergeCandidates( const PredictionUnit &pu, MergeCtx& mrgCtx,
     }
   }
 
-  // pairwise-average candidates
+  // pairwise-average candidates 
+  //使用L0的mergelist第一个和L1的第一个进行平均，如果一个不可用，那么直接用那个可用的 再进行冗余检测
   {
     if (cnt > 1 && cnt < maxNumMergeCand)
     {
@@ -2342,7 +2345,7 @@ bool PU::addAffineMVPCandUnscaled( const PredictionUnit &pu, const RefPicList &r
 #if GDR_ENABLED
   const bool isEncodeGdrClean = cs.sps->getGDREnabledFlag() && cs.pcv->isEncoder && ((cs.picHeader->getInGdrInterval() && cs.isClean(pu.Y().topRight(), CHANNEL_TYPE_LUMA)) || (cs.picHeader->getNumVerVirtualBoundaries() == 0));
 #endif
-  switch ( dir )
+  switch ( dir )//根据相邻块的方向参数dir,得到指定方向的相邻PU的位置信息
   {
   case MD_LEFT:
     neibPos = pos.offset( -1, 0 );
@@ -2363,11 +2366,11 @@ bool PU::addAffineMVPCandUnscaled( const PredictionUnit &pu, const RefPicList &r
     break;
   }
 
-  neibPU = cs.getPURestricted( neibPos, pu, pu.chType );
+  neibPU = cs.getPURestricted( neibPos, pu, pu.chType );//获得相邻PU
 
   if (neibPU == NULL || !CU::isInter(*neibPU->cu) || !neibPU->cu->affine || neibPU->mergeType != MRG_TYPE_DEFAULT_N)
   {
-    return false;
+    return false;//不可用返回false
   }
 
   Mv outputAffineMv[3];
@@ -2380,12 +2383,12 @@ bool PU::addAffineMVPCandUnscaled( const PredictionUnit &pu, const RefPicList &r
 
   const int        currRefPOC = cs.slice->getRefPic( refPicList, refIdx )->getPOC();
   const RefPicList refPicList2nd = (refPicList == REF_PIC_LIST_0) ? REF_PIC_LIST_1 : REF_PIC_LIST_0;
-
+  //两个参考帧列表 一个不可用再使用另外一个
   for ( int predictorSource = 0; predictorSource < 2; predictorSource++ ) // examine the indicated reference picture list, then if not available, examine the other list.
   {
     const RefPicList eRefPicListIndex = (predictorSource == 0) ? refPicList : refPicList2nd;
     const int        neibRefIdx = neibMi.refIdx[eRefPicListIndex];
-
+    //只考虑使用相同参考帧的仿射CU
     if ( ((neibPU->interDir & (eRefPicListIndex + 1)) == 0) || pu.cu->slice->getRefPOC( eRefPicListIndex, neibRefIdx ) != currRefPOC )
     {
       continue;
@@ -2402,9 +2405,10 @@ bool PU::addAffineMVPCandUnscaled( const PredictionUnit &pu, const RefPicList &r
       xInheritedAffineMv(pu, neibPU, eRefPicListIndex, outputAffineMv);
     }
 #else
+    //继承当前PU相邻PU的运动信息
     xInheritedAffineMv( pu, neibPU, eRefPicListIndex, outputAffineMv );
 #endif
-    outputAffineMv[0].roundAffinePrecInternal2Amvr(pu.cu->imv);
+    outputAffineMv[0].roundAffinePrecInternal2Amvr(pu.cu->imv);//调整精度
     outputAffineMv[1].roundAffinePrecInternal2Amvr(pu.cu->imv);
     affiAMVPInfo.mvCandLT[affiAMVPInfo.numCand] = outputAffineMv[0];
     affiAMVPInfo.mvCandRT[affiAMVPInfo.numCand] = outputAffineMv[1];
@@ -2594,6 +2598,7 @@ void PU::xInheritedAffineMv( const PredictionUnit &pu, const PredictionUnit* puN
   if ( (posNeiY + neiH) % pu.cs->sps->getCTUSize() == 0 && (posNeiY + neiH) == posCurY )
   {
     // use bottom-left and bottom-right sub-block MVs for inheritance
+    //使用相邻PU的左下和右下继承
     const Position posRB = puNeighbour->Y().bottomRight();
     const Position posLB = puNeighbour->Y().bottomLeft();
     mvLT = puNeighbour->getMotionInfo( posLB ).mv[eRefPicList];
@@ -2604,7 +2609,8 @@ void PU::xInheritedAffineMv( const PredictionUnit &pu, const PredictionUnit* puN
 
   int shift = MAX_CU_DEPTH;
   int iDMvHorX, iDMvHorY, iDMvVerX, iDMvVerY;
-
+  //Hor指的是x前的系数 X指的是MVx
+  //根据仿射参数模型计算出模型参数  这里需要参考V2002提案的algorithm description之前的有一点小错误 下标出错
   iDMvHorX = (mvRT - mvLT).getHor() << (shift - floorLog2(neiW));
   iDMvHorY = (mvRT - mvLT).getVer() << (shift - floorLog2(neiW));
   if ( puNeighbour->cu->affineType == AFFINEMODEL_6PARAM && !isTopCtuBoundary )
@@ -2617,12 +2623,14 @@ void PU::xInheritedAffineMv( const PredictionUnit &pu, const PredictionUnit* puN
     iDMvVerX = -iDMvHorY;
     iDMvVerY = iDMvHorX;
   }
-
+  //缩放
   int iMvScaleHor = mvLT.getHor() << shift;
   int iMvScaleVer = mvLT.getVer() << shift;
   int horTmp, verTmp;
 
   // v0
+  //相当于使用差值来推导出MV
+  //使用时还需要加上Nei对应点的MV 也就是iMvScaleHor.Ver
   horTmp = iMvScaleHor + iDMvHorX * (posCurX - posNeiX) + iDMvVerX * (posCurY - posNeiY);
   verTmp = iMvScaleVer + iDMvHorY * (posCurX - posNeiX) + iDMvVerY * (posCurY - posNeiY);
   roundAffineMv( horTmp, verTmp, shift );
@@ -2679,7 +2687,7 @@ void PU::fillAffineMvpCand(PredictionUnit &pu, const RefPicList &eRefPicList, co
   }
 #endif
   // insert inherited affine candidates
-  Mv outputAffineMv[3];
+  Mv outputAffineMv[3];//保存的是B2 B1 A1 三个点的MV
 #if GDR_ENABLED
   bool     outputAffineMvSolid[3];
   MvpType  outputAffineMvType[3];
@@ -2688,8 +2696,14 @@ void PU::fillAffineMvpCand(PredictionUnit &pu, const RefPicList &eRefPicList, co
   Position posLT = pu.Y().topLeft();
   Position posRT = pu.Y().topRight();
   Position posLB = pu.Y().bottomLeft();
-
-  // check left neighbor
+  /*
+获取第一种AMVP候选类型，即相邻PU的可用运动信息继承
+下面连续的if获取当前PU的可用相邻块的仿射运动信息
+检查可用性的顺序为：
+1、先检查左边 即左下->左
+2、再检查上方 即右上->上->左上
+*/
+  // check left neighbor 如果左下失败才会加入左
   if ( !addAffineMVPCandUnscaled( pu, eRefPicList, refIdx, posLB, MD_BELOW_LEFT, affiAMVPInfo ) )
   {
     addAffineMVPCandUnscaled( pu, eRefPicList, refIdx, posLB, MD_LEFT, affiAMVPInfo );
@@ -2703,7 +2717,7 @@ void PU::fillAffineMvpCand(PredictionUnit &pu, const RefPicList &eRefPicList, co
       addAffineMVPCandUnscaled( pu, eRefPicList, refIdx, posLT, MD_ABOVE_LEFT, affiAMVPInfo );
     }
   }
-
+  //已经足够了
   if ( affiAMVPInfo.numCand >= AMVP_MAX_NUM_CANDS )
   {
     for (int i = 0; i < affiAMVPInfo.numCand; i++)
@@ -2716,6 +2730,7 @@ void PU::fillAffineMvpCand(PredictionUnit &pu, const RefPicList &eRefPicList, co
   }
 
   // insert constructed affine candidates
+  //由邻居CU的MV构建
   int cornerMVPattern = 0;
 
   //-------------------  V0 (START) -------------------//
@@ -2734,7 +2749,7 @@ void PU::fillAffineMvpCand(PredictionUnit &pu, const RefPicList &eRefPicList, co
   }
 #endif
 
-  // A->C: Above Left, Above, Left
+  // A->C: Above Left, Above, Left 也就是左上像素点相邻的几个PU
   addMVPCandUnscaled( pu, eRefPicList, refIdx, posLT, MD_ABOVE_LEFT, amvpInfo0 );
   if ( amvpInfo0.numCand < 1 )
   {
@@ -2762,7 +2777,7 @@ void PU::fillAffineMvpCand(PredictionUnit &pu, const RefPicList &eRefPicList, co
   }
 #endif
 
-  // D->E: Above, Above Right
+  // D->E: Above, Above Right 右上相邻的PU
   addMVPCandUnscaled( pu, eRefPicList, refIdx, posRT, MD_ABOVE, amvpInfo1 );
   if ( amvpInfo1.numCand < 1 )
   {
@@ -2819,7 +2834,7 @@ void PU::fillAffineMvpCand(PredictionUnit &pu, const RefPicList &eRefPicList, co
   outputAffineMv[0].roundAffinePrecInternal2Amvr(pu.cu->imv);
   outputAffineMv[1].roundAffinePrecInternal2Amvr(pu.cu->imv);
   outputAffineMv[2].roundAffinePrecInternal2Amvr(pu.cu->imv);
-
+  //使用上面这些点求出的角点MV构建仿射模型 
   if ( cornerMVPattern == 7 || (cornerMVPattern == 3 && pu.cu->affineType == AFFINEMODEL_4PARAM) )
   {
     affiAMVPInfo.mvCandLT[affiAMVPInfo.numCand] = outputAffineMv[0];
@@ -2846,6 +2861,7 @@ void PU::fillAffineMvpCand(PredictionUnit &pu, const RefPicList &eRefPicList, co
     affiAMVPInfo.numCand++;
   }
 
+  //第三种类型，直接加入角点上的三个MV建立平移MV
   if ( affiAMVPInfo.numCand < 2 )
   {
     // check corner MVs
@@ -2879,6 +2895,7 @@ void PU::fillAffineMvpCand(PredictionUnit &pu, const RefPicList &eRefPicList, co
     }
 
     // Get Temporal Motion Predictor
+    //时域上的同位块的MV 两个 一个是偏移4 4 另一个是中心点
     if ( affiAMVPInfo.numCand < 2 && pu.cs->picHeader->getEnableTMVPFlag() )
     {
       const int refIdxCol = refIdx;
@@ -2962,7 +2979,7 @@ void PU::fillAffineMvpCand(PredictionUnit &pu, const RefPicList &eRefPicList, co
         affiAMVPInfo.numCand++;
       }
     }
-
+    //加入0
     if ( affiAMVPInfo.numCand < 2 )
     {
       // add zero MV
@@ -3050,7 +3067,7 @@ bool PU::addMVPCandUnscaled( const PredictionUnit &pu, const RefPicList &eRefPic
   {
     const RefPicList eRefPicListIndex = ( predictorSource == 0 ) ? eRefPicList : eRefPicList2nd;
     const int        neibRefIdx       = neibMi.refIdx[eRefPicListIndex];
-
+    //如果当前Cu的参考帧和 nei的参考帧的POC相同，那么直接使用nei的mv作为mv
     if( neibRefIdx >= 0 && currRefPOC == cs.slice->getRefPOC( eRefPicListIndex, neibRefIdx ) )
     {
 #if GDR_ENABLED
@@ -3410,7 +3427,7 @@ void PU::getAffineMergeCand( const PredictionUnit &pu, AffineMergeCtx& affMrgCtx
     const Position posCurLB = pu.Y().bottomLeft();
     MotionInfo miLeft;
 
-    //left
+    //left 使用A1的MV
     const PredictionUnit* puLeft = cs.getPURestricted( posCurLB.offset( -1, 0 ), pu, pu.chType );
     const bool isAvailableA1 = puLeft && isDiffMER(pu.lumaPos(), posCurLB.offset(-1, 0), plevel) && pu.cu != puLeft->cu && CU::isInter( *puLeft->cu );
     if ( isAvailableA1 )
@@ -3438,7 +3455,7 @@ void PU::getAffineMergeCand( const PredictionUnit &pu, AffineMergeCtx& affMrgCtx
     }
 
     mrgCtx.numValidMergeCand = pos;
-
+    //如V2002的Fig29 查找A1的角点MV
     isAvailableSubPu = getInterMergeSubPuMvpCand(pu, mrgCtx, tmpLICFlag, pos, 0);
     if ( isAvailableSubPu )
     {
@@ -3476,6 +3493,7 @@ void PU::getAffineMergeCand( const PredictionUnit &pu, AffineMergeCtx& affMrgCtx
   if ( slice.getSPS()->getUseAffine() )
   {
     ///> Start: inherited affine candidates
+    //V2002 fig28的五个相邻块
     const PredictionUnit* npu[5];
     int numAffNeighLeft = getAvailableAffineNeighboursForLeftPredictor( pu, npu );
     int numAffNeigh = getAvailableAffineNeighboursForAbovePredictor( pu, npu, numAffNeighLeft );
@@ -3555,6 +3573,7 @@ void PU::getAffineMergeCand( const PredictionUnit &pu, AffineMergeCtx& affMrgCtx
     ///> End: inherited affine candidates
 
     ///> Start: Constructed affine candidates
+    //构建 使用把相邻PU的MV作为参数
     {
       MotionInfo mi[4];
       bool isAvailable[4] = { false };
@@ -3628,7 +3647,7 @@ void PU::getAffineMergeCand( const PredictionUnit &pu, AffineMergeCtx& affMrgCtx
         }
       }
 
-      // control point: RB
+      // control point: RB 虚线框
       if ( slice.getPicHeader()->getEnableTMVPFlag() )
       {
         //>> MTK colocated-RightBottom
@@ -3697,6 +3716,7 @@ void PU::getAffineMergeCand( const PredictionUnit &pu, AffineMergeCtx& affMrgCtx
           }
         }
       }
+      //上面得到的重建存在mi中
 
       //-------------------  insert model  -------------------//
       int order[6] = { 0, 1, 2, 3, 4, 5 };
@@ -3729,6 +3749,7 @@ void PU::getAffineMergeCand( const PredictionUnit &pu, AffineMergeCtx& affMrgCtx
 #if GDR_ENABLED
         int affinNumValidCand = affMrgCtx.numValidMergeCand;
 #endif
+        //使用六种情况得到构建仿射参数
         getAffineControlPointCand(pu, mi, isAvailable, model[modelIdx], ((modelIdx == 3) ? neighBcw[1] : neighBcw[0]), modelIdx, verNum[modelIdx], affMrgCtx);
 #if GDR_ENABLED
         if (isEncodeGdrClean)
@@ -3755,7 +3776,7 @@ void PU::getAffineMergeCand( const PredictionUnit &pu, AffineMergeCtx& affMrgCtx
     ///> End: Constructed affine candidates
   }
 
-  ///> zero padding
+  ///> zero padding 加0
   int cnt = affMrgCtx.numValidMergeCand;
   while ( cnt < maxNumAffineMergeCand )
   {
@@ -3984,6 +4005,7 @@ bool PU::getInterMergeSubPuMvpCand(const PredictionUnit &pu, MergeCtx& mrgCtx, b
   centerPos = Position{ PosType(centerPos.x & mask), PosType(centerPos.y & mask) };
 
   // derivation of center motion parameters from the collocated CU
+  //同位块的中间位置 
   const MotionInfo &mi = pColPic->cs->getMotionInfo(centerPos);
 
   if (mi.isInter && mi.isIBCmot == false)
@@ -4029,7 +4051,7 @@ bool PU::getInterMergeSubPuMvpCand(const PredictionUnit &pu, MergeCtx& mrgCtx, b
     MotionBuf &mb = mrgCtx.subPuMvpMiBuf;
 
     const bool isBiPred = isBipredRestriction(pu);
-
+    //得到各个子块的同位MVP
     for (int y = puPos.y; y < puPos.y + puSize.height; y += puHeight)
     {
       for (int x = puPos.x; x < puPos.x + puSize.width; x += puWidth)

@@ -1455,6 +1455,9 @@ void EncSlice::calCostPictureI(Picture* picture)
  */
 void EncSlice::compressSlice( Picture* pcPic, const bool bCompressEntireSlice, const bool bFastDeltaQP )
 {
+  //在precompressSlice中 bCompressEntireSlice==true 调用该函数将进行一次压缩
+  //结束后再调用该函数，后两个参数为false
+  //第一次不进行slice segment划分，第二次进行
   // if bCompressEntireSlice is true, then the entire slice (not slice segment) is compressed,
   //   effectively disabling the slice-segment-mode.
 
@@ -1552,7 +1555,7 @@ void EncSlice::compressSlice( Picture* pcPic, const bool bCompressEntireSlice, c
   m_pcInterSearch->resetAffineMVList();
   m_pcInterSearch->resetUniMvList();
   ::memset(g_isReusedUniMVsFilled, 0, sizeof(g_isReusedUniMVsFilled));
-  //CTU入口函数
+  //CTUs入口函数
   encodeCtus( pcPic, bCompressEntireSlice, bFastDeltaQP, m_pcLib );
   if (checkPLTRatio)
   {
@@ -1675,12 +1678,14 @@ void EncSlice::encodeCtus( Picture* pcPic, const bool bCompressEntireSlice, cons
   if ( pcSlice->getSPS()->getFpelMmvdEnabledFlag() ||
       (pcSlice->getSPS()->getIBCFlag() && m_pcCuEncoder->getEncCfg()->getIBCHashSearch()))
   {
+    //建立IBC的hash表
     m_pcCuEncoder->getIbcHashMap().rebuildPicHashMap(cs.picture->getTrueOrigBuf());
     if (m_pcCfg->getIntraPeriod() != -1)
     {
       int hashBlkHitPerc = m_pcCuEncoder->getIbcHashMap().calHashBlkMatchPerc(cs.area.Y());
       cs.slice->setDisableSATDForRD(hashBlkHitPerc > 59);
     }
+    //设置TSRC？变换跳过？
     if ((pcSlice->getSPS()->getSpsRangeExtension().getTSRCRicePresentFlag()) && (m_pcGOPEncoder->getPreQP() != pcSlice->getSliceQp()) && (pcPic->cs->pps->getNumSlicesInPic() == 1) && (pcSlice->get_tsrc_index() > 0) && (pcSlice->getSPS()->getBitDepth(CHANNEL_TYPE_LUMA) <= 12))
     {
       uint32_t totalCtu  = 0;

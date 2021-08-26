@@ -2529,7 +2529,8 @@ void EncGOP::compressGOP( int iPOCLast, int iNumPicRcvd, PicList& rcListPic,
     {
       CU::checkConformanceILRP(pcSlice);
     }
-    //初始化hash运动估计 计算各个位置的hash值
+    //初始化hash运动估计 判断是否使用Hash
+
     xPicInitHashME( pcPic, pcSlice->getPPS(), rcListPic );
     //下面是从cfg中读取参数设置编码中的尺寸限制等
     if( m_pcCfg->getUseAMaxBT() )
@@ -3245,7 +3246,7 @@ void EncGOP::compressGOP( int iPOCLast, int iNumPicRcvd, PicList& rcListPic,
       m_pcLoopFilter->deblockingFilterPic( cs );
 
       CS::setRefinedMotionField(cs);
-
+      //SAO
       if( pcSlice->getSPS()->getSAOEnabledFlag() )
       {
         bool sliceEnabled[MAX_NUM_COMPONENT];

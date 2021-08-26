@@ -280,6 +280,7 @@ void EncCu::compressCtu( CodingStructure& cs, const UnitArea& area, const unsign
   if (m_pcEncCfg->getIBCMode() && m_pcEncCfg->getIBCHashSearch() && (m_pcEncCfg->getIBCFastMethod() & IBC_FAST_METHOD_ADAPTIVE_SEARCHRANGE))
   {
     const int hashHitRatio = m_ibcHashMap.getHashHitRatio(area.Y()); // in percent
+    //缩小搜索范围
     if (hashHitRatio < 5) // 5%
     {
       m_ctuIbcSearchRangeX >>= 1;
@@ -765,7 +766,7 @@ void EncCu::xCompressCU( CodingStructure*& tempCS, CodingStructure*& bestCS, Par
 
     if( currTestMode.type == ETM_INTER_ME )
     {
-      //整像素精度Inter 常规AMVP模式或者Affine AMVP模式
+      //Inter 常规AMVP模式或者Affine AMVP模式
       if( ( currTestMode.opts & ETO_IMV ) != 0 )
       {
         const bool skipAltHpelIF = ( int( ( currTestMode.opts & ETO_IMV ) >> ETO_IMV_SHIFT ) == 4 ) && ( bestIntPelCost > 1.25 * bestCS->cost );
@@ -853,7 +854,7 @@ void EncCu::xCompressCU( CodingStructure*& tempCS, CodingStructure*& bestCS, Par
       xCheckPLT( tempCS, bestCS, partitioner, currTestMode );
     }
     else if (currTestMode.type == ETM_IBC)
-    {//IBC
+    {//IBC AMVP
       xCheckRDCostIBCMode(tempCS, bestCS, partitioner, currTestMode);
     }
     else if (currTestMode.type == ETM_IBC_MERGE)
@@ -2163,7 +2164,7 @@ void EncCu::xCheckRDCostMerge2Nx2N( CodingStructure *&tempCS, CodingStructure *&
     pu.cu = &cu;
     pu.cs = tempCS;
     PU::getInterMergeCandidates(pu, mergeCtx, 0);//获得常规Merge获选列表
-    PU::getInterMMVDMergeCandidates(pu, mergeCtx);//获得MMVD Merge获选列表
+    PU::getInterMMVDMergeCandidates(pu, mergeCtx);//获得MMVD Merge获选列表 使用merge前两个MV构建
     pu.regularMergeFlag = true;
 #if GDR_ENABLED
     cs = pu.cs;
@@ -2695,7 +2696,7 @@ void EncCu::xCheckRDCostMerge2Nx2N( CodingStructure *&tempCS, CodingStructure *&
         pu.regularMergeFlag = true;
         mergeCtx.setMmvdMergeCandiInfo(pu, uiMergeCand);
       }
-      else
+      else //是普通的merge
       {
         cu.mmvdSkip = false;
         pu.regularMergeFlag = true;
@@ -2719,7 +2720,7 @@ void EncCu::xCheckRDCostMerge2Nx2N( CodingStructure *&tempCS, CodingStructure *&
           int dx, dy, i, j, num = 0;
           dy = std::min<int>(pu.lumaSize().height, DMVR_SUBCU_HEIGHT);
           dx = std::min<int>(pu.lumaSize().width, DMVR_SUBCU_WIDTH);
-          if (PU::checkDMVRCondition(pu))//DMVR条件？
+          if (PU::checkDMVRCondition(pu))//DMVR条件（解码端MV精度自适应 不是很明白）
           {
             for (i = 0; i < (pu.lumaSize().height); i += dy)
             {
@@ -2947,6 +2948,7 @@ void EncCu::xCheckRDCostMergeGeo2Nx2N(CodingStructure *&tempCS, CodingStructure 
   {
     isSkipThisCand[i] = false;
   }
+  //使用mereg list中mv进行运动补偿 
   for (uint8_t mergeCand = 0; mergeCand < maxNumMergeCandidates; mergeCand++)
   {
     geoBuffer[mergeCand] = m_acMergeBuffer[mergeCand].getBuf(localUnitArea);
@@ -3021,7 +3023,7 @@ void EncCu::xCheckRDCostMergeGeo2Nx2N(CodingStructure *&tempCS, CodingStructure 
 
   int wIdx = floorLog2(cu.lwidth()) - GEO_MIN_CU_LOG2;
   int hIdx = floorLog2(cu.lheight()) - GEO_MIN_CU_LOG2;
-  //遍历64种模式
+  //遍历64种模式 先求出各个划分下 使用不同merge MV的预测结果
   for (int splitDir = 0; splitDir < GEO_NUM_PARTITION_MODE; splitDir++)
   {
     int maskStride = 0, maskStride2 = 0;
@@ -3085,7 +3087,7 @@ void EncCu::xCheckRDCostMergeGeo2Nx2N(CodingStructure *&tempCS, CodingStructure 
         m_GeoCostList.insert(splitDir, 1, mergeCand, (double)sadSmall + (double)bitsCand * sqrtLambdaForFirstPass);
       }
 #else
-      //使用之前保存的mergeList MV运动补偿结果 已经SADMASK求出该种划分情况下的结果
+      //使用之前保存的mergeList MV运动补偿结果 以及SADMASK求出该种划分情况下的结果
       m_pcRdCost->setDistParam(distParam, tempCS->getOrgBuf().Y(), geoTempBuf[mergeCand].Y().buf, geoTempBuf[mergeCand].Y().stride, SADmask, maskStride, stepX, maskStride2, sps.getBitDepth(CHANNEL_TYPE_LUMA), COMPONENT_Y);
       sadLarge = distParam.distFunc(distParam);
       //m_GeoCostList维护一个三维数组 singleDistList[partIdx][geoIdx][mergeIdx]=cost
@@ -3095,7 +3097,7 @@ void EncCu::xCheckRDCostMergeGeo2Nx2N(CodingStructure *&tempCS, CodingStructure 
 #endif
     }
   }
-  //遍历所有划分方式
+  //遍历64种划分方式 开始组合
   for (int splitDir = 0; splitDir < GEO_NUM_PARTITION_MODE; splitDir++)
   {
     //将两部分的cost组合 形成最终的cost
@@ -3476,7 +3478,7 @@ void EncCu::xCheckRDCostAffineMerge2Nx2N( CodingStructure *&tempCS, CodingStruct
       }
 
       // Try to limit number of candidates using SATD-costs
-      //SATD比之前的结果的1.25倍还大 说明这个失真较多 直接去除 不进行RDO优化
+      //SATD比之前的最好结果的1.25倍还大 说明这个失真较多 直接去除 不进行RDO优化
       for ( uint32_t i = 1; i < uiNumMrgSATDCand; i++ )
       {
         if ( candCostList[i] > MRG_FAST_RATIO * candCostList[0] )
@@ -3499,6 +3501,7 @@ void EncCu::xCheckRDCostAffineMerge2Nx2N( CodingStructure *&tempCS, CodingStruct
   uint32_t iteration;
   uint32_t iterationBegin = 0;
   iteration = 2;
+  //第一遍merge 第二遍skip
   for (uint32_t uiNoResidualPass = iterationBegin; uiNoResidualPass < iteration; ++uiNoResidualPass)
   {
     for ( uint32_t uiMrgHADIdx = 0; uiMrgHADIdx < uiNumMrgSATDCand; uiMrgHADIdx++ )
@@ -3692,7 +3695,7 @@ void EncCu::xCheckRDCostIBCModeMerge2Nx2N(CodingStructure *&tempCS, CodingStruct
     pu.mmvdMergeFlag = false;
     pu.regularMergeFlag = false;
     cu.geoFlag = false;
-    PU::getIBCMergeCandidates(pu, mergeCtx);//获取merge列表
+    PU::getIBCMergeCandidates(pu, mergeCtx);//获取IBCmerge列表 左 上 历史 0
 #if GDR_ENABLED
     gdrClean = tempCS->isClean(pu.Y().topRight(), CHANNEL_TYPE_LUMA) || tempCS->picHeader->getNumVerVirtualBoundaries() == 0;
 #endif

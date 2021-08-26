@@ -901,7 +901,7 @@ void InterPrediction::xPredAffineBlk(const ComponentID &compID, const Prediction
   const int puy = pu.ly();
 #endif
 
-  // get affine sub-block width and height
+  // get affine sub-block width and height 仿射模型运动补偿是基于子块进行的
   const int width  = pu.Y().width;
   const int height = pu.Y().height;
   int blockWidth = AFFINE_MIN_BLOCK_SIZE;
@@ -915,7 +915,7 @@ void InterPrediction::xPredAffineBlk(const ComponentID &compID, const Prediction
   const int cxHeight = height >> iScaleY;
   const int iHalfBW  = blockWidth  >> 1;
   const int iHalfBH  = blockHeight >> 1;
-
+  //构建仿射参数
   const int iBit = MAX_CU_DEPTH;
   int iDMvHorX, iDMvHorY, iDMvVerX, iDMvVerY;
   iDMvHorX = (mvRT - mvLT).getHor() << (iBit - floorLog2(cxWidth));
@@ -939,8 +939,9 @@ void InterPrediction::xPredAffineBlk(const ComponentID &compID, const Prediction
 
   const int shift = iBit - 4 + MV_FRACTIONAL_BITS_INTERNAL;
   bool      wrapRef = false;
+  //检测该参数下生成的MV是否会超过参考范围的限制
   const bool subblkMVSpreadOverLimit = isSubblockVectorSpreadOverLimit( iDMvHorX, iDMvHorY, iDMvVerX, iDMvVerY, pu.interDir );
-
+  //Prediction refinement with optical flow PROF
   bool enablePROF = (sps.getUsePROF()) && (!m_skipPROF) && (compID == COMPONENT_Y);
   enablePROF &= (!pu.cs->picHeader->getProfDisabledFlag());
   enablePROF &= !((pu.cu->affineType == AFFINEMODEL_6PARAM && _mv[0] == _mv[1] && _mv[0] == _mv[2]) || (pu.cu->affineType == AFFINEMODEL_4PARAM && _mv[0] == _mv[1]));
@@ -968,7 +969,14 @@ void InterPrediction::xPredAffineBlk(const ComponentID &compID, const Prediction
 
   int *dMvScaleHor = m_dMvBuf[m_iRefListIdx];
   int *dMvScaleVer = m_dMvBuf[m_iRefListIdx] + 16;
-
+  //如果使用光流估计细化结果 
+  /*
+    1.基于子块的仿射补偿
+    2.使用[-1,0,1]生成两个方向上的梯度（和双向光流中方法相同）梯度计算使用边缘扩展法，
+          值为参考块相应扩展位置像素值
+    3.使用光流方程计算光流，
+    4.使用光流结果细化仿射补偿结果  
+  */
   if (enablePROF)
   {
     int* dMvH = dMvScaleHor;
