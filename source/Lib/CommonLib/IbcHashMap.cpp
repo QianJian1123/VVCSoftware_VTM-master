@@ -173,7 +173,7 @@ uint32_t IbcHashMap::xxComputeCrc32c16bit(uint32_t crc, const Pel pel)
   const void *buf = &pel;
   const uint8_t *p = (const uint8_t *)buf;
   size_t size = 2;
-
+  //CRC当前结果异或当前像素值最后取最低的8位，通过查表得到一个值，这个值再与CRC右移8位的值异或
   while (size--)
   {
     crc = crc32Table[(crc ^ *p++) & 0xff] ^ (crc >> 8);
@@ -209,6 +209,7 @@ void IbcHashMap::xxBuildPicHashMap(const PelUnitBuf& pic)
   const Pel* pelCr = NULL;
 
   Position pos;
+  //逐个像素点进行计算Hash，并建立hash2pos和pos2hash两个数据
   for (pos.y = 0; pos.y + MIN_PU_SIZE <= pic.Y().height; pos.y++)
   {
     // row pointer
@@ -275,6 +276,8 @@ bool IbcHashMap::ibcHashMatch(const Area& lumaArea, std::vector<Position>& cand,
   size_t minSize = MAX_UINT;
   unsigned int targetHashOneBlock = 0;
   Position targetBlockOffsetInCu(0, 0);
+  //IBCHash以最小PU最为计算单元
+  //遍历每个Hash匹配块单元对应的Hash表size，得到最小size
   for (SizeType y = 0; y < lumaArea.height && minSize > 1; y += MIN_PU_SIZE)
   {
     for (SizeType x = 0; x < lumaArea.width && minSize > 1; x += MIN_PU_SIZE)
@@ -288,7 +291,7 @@ bool IbcHashMap::ibcHashMatch(const Area& lumaArea, std::vector<Position>& cand,
       }
     }
   }
-
+  //最少匹配块的那个块的Hash值的位置hash表
   if (m_hash2Pos[targetHashOneBlock].size() > 1)
   {
     std::vector<Position>& candOneBlock = m_hash2Pos[targetHashOneBlock];
@@ -299,8 +302,10 @@ bool IbcHashMap::ibcHashMatch(const Area& lumaArea, std::vector<Position>& cand,
       Position topLeft = refBlockPos->offset(-targetBlockOffsetInCu.x, -targetBlockOffsetInCu.y);
       Position bottomRight = topLeft.offset(lumaArea.width - 1, lumaArea.height - 1);
       bool wholeBlockMatch = true;
+      //用小的块匹配到的大块是否所有小块的Hash whole match
       if (lumaArea.width > MIN_PU_SIZE || lumaArea.height > MIN_PU_SIZE)
       {
+        //范围检测
         if (!cs.isDecomp(bottomRight, CHANNEL_TYPE_LUMA) || bottomRight.x >= m_picWidth || bottomRight.y >= m_picHeight || topLeft.x < 0 || topLeft.y < 0)
         {
           continue;
@@ -314,14 +319,17 @@ bool IbcHashMap::ibcHashMatch(const Area& lumaArea, std::vector<Position>& cand,
           }
         }
       }
+      //如果当前块就是最小块，那么显然匹配
       else
       {
         CHECK(topLeft != *refBlockPos, "4x4 target block should not have offset!");
+        //如果超出范围 那么这个块不能用
         if (abs(topLeft.x - lumaArea.x) > searchRange4SmallBlk || abs(topLeft.y - lumaArea.y) > searchRange4SmallBlk || !cs.isDecomp(bottomRight, CHANNEL_TYPE_LUMA))
         {
           continue;
         }
       }
+      //完美匹配了 加入到cand内
       if (wholeBlockMatch)
       {
         cand.push_back(topLeft);

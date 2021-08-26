@@ -236,7 +236,7 @@ int main(int argc, char* argv[])
         try
         {
 #endif
-          keepLoop = encApp->encodePrep( eos );
+          keepLoop = encApp->encodePrep( eos );//获取YUV，初始化lib
 #ifndef _DEBUG
         }
         catch( Exception &e )

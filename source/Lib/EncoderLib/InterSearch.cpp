@@ -765,13 +765,14 @@ Distortion InterSearch::xPatternRefinement( const CPelBuf* pcPatternKey,
   int iRefStride = pcPatternKey->width + 1;
   m_pcRdCost->setDistParam( m_cDistParam, *pcPatternKey, m_filteredBlock[0][0][0], iRefStride, m_lumaClpRng.bd, COMPONENT_Y, 0, 1, m_pcEncCfg->getUseHADME() && bAllowUseOfHadamard );
 
-  const Mv* pcMvRefine = (iFrac == 2 ? s_acMvRefineH : s_acMvRefineQ);
+  const Mv* pcMvRefine = (iFrac == 2 ? s_acMvRefineH : s_acMvRefineQ);//搜索邻域的偏移量前者为half 后者为Quarter
 #if GDR_ENABLED
   if (isEncodeGdrClean)
   {
     rbCleanCandExist = false;
   }
 #endif
+  //九个点选择最佳的
   for (uint32_t i = 0; i < 9; i++)
   {
     if (m_skipFracME && i > 0)
@@ -779,7 +780,7 @@ Distortion InterSearch::xPatternRefinement( const CPelBuf* pcPatternKey,
       break;
     }
     Mv cMvTest = pcMvRefine[i];
-    cMvTest += baseRefMv;
+    cMvTest += baseRefMv;//偏移后的MV
 
     int horVal = cMvTest.getHor() * iFrac;
     int verVal = cMvTest.getVer() * iFrac;
@@ -799,7 +800,7 @@ Distortion InterSearch::xPatternRefinement( const CPelBuf* pcPatternKey,
 
     m_cDistParam.cur.buf   = piRefPos;
     uiDist = m_cDistParam.distFunc( m_cDistParam );
-    uiDist += m_pcRdCost->getCostOfVectorWithPredictor( cMvTest.getHor(), cMvTest.getVer(), 0 );
+    uiDist += m_pcRdCost->getCostOfVectorWithPredictor( cMvTest.getHor(), cMvTest.getVer(), 0 );//加偏移之后的cost
 
 #if GDR_ENABLED
     allOk = (uiDist < uiDistBest);
@@ -1098,7 +1099,7 @@ void InterSearch::xIntraPatternSearch(PredictionUnit& pu, IntTZSearchStruct&  cS
 
     Mv cMvPredEncOnly[IBC_NUM_CANDIDATES];
     int nbPreds = 0;
-    PU::getIbcMVPsEncOnly(pu, cMvPredEncOnly, nbPreds);
+    PU::getIbcMVPsEncOnly(pu, cMvPredEncOnly, nbPreds);//用AMVP最佳作为起始点搜搜
     m_numBVs = xMergeCandLists(m_acBVs, m_numBVs, (2 * IBC_NUM_CANDIDATES), cMvPredEncOnly, nbPreds);
 
     for (unsigned int cand = 0; cand < m_numBVs; cand++)
@@ -1123,7 +1124,7 @@ void InterSearch::xIntraPatternSearch(PredictionUnit& pu, IntTZSearchStruct&  cS
           sad = m_pcRdCost->getBvCostMultiplePreds(xPred, yPred, pu.cs->sps->getAMVREnabledFlag());
           m_cDistParam.cur.buf = piRefSrch + cStruct.iRefStride * yPred + xPred;
           sad += m_cDistParam.distFunc(m_cDistParam);
-
+          //计算SAD
           xIBCSearchMVCandUpdate(sad, xPred, yPred, sadBestCand, cMVCand);
         }
       }
@@ -1133,7 +1134,7 @@ void InterSearch::xIntraPatternSearch(PredictionUnit& pu, IntTZSearchStruct&  cS
     bestY = cMVCand[0].getVer();
     rcMv.set(bestX, bestY);
     sadBest = sadBestCand[0];
-
+    //1-D y搜索
     const int boundY = (0 - roiHeight - puPelOffsetY);
     for (int y = std::max(srchRngVerTop, 0 - cuPelY); y <= boundY; ++y)
     {
@@ -1158,6 +1159,7 @@ void InterSearch::xIntraPatternSearch(PredictionUnit& pu, IntTZSearchStruct&  cS
 
       xIBCSearchMVCandUpdate(sad, 0, y, sadBestCand, cMVCand);
       tempSadBest = sadBestCand[0];
+      //失真足够小
       if (sadBestCand[0] <= 3)
       {
         bestX = cMVCand[0].getHor();
@@ -1168,7 +1170,7 @@ void InterSearch::xIntraPatternSearch(PredictionUnit& pu, IntTZSearchStruct&  cS
         goto end;
       }
     }
-
+    //1-D x搜索
     const int boundX = std::max(srchRngHorLeft, -cuPelX);
     for (int x = 0 - roiWidth - puPelOffsetX; x >= boundX; --x)
     {
@@ -1220,9 +1222,10 @@ void InterSearch::xIntraPatternSearch(PredictionUnit& pu, IntTZSearchStruct&  cS
       goto end;
     }
 
-    //尺寸小于16×16
+    //尺寸小于16×16 考虑2D 搜索
     if (pu.lwidth() < 16 && pu.lheight() < 16)
     {
+      //y步长为2
       for (int y = std::max(srchRngVerTop, -cuPelY); y <= srchRngVerBottom; y += 2)
       {
         if ((y == 0) || ((int)(cuPelY + y + roiHeight) >= picHeight))
@@ -1267,6 +1270,7 @@ void InterSearch::xIntraPatternSearch(PredictionUnit& pu, IntTZSearchStruct&  cS
       if (sadBest - m_pcRdCost->getBvCostMultiplePreds(bestX, bestY, pu.cs->sps->getAMVREnabledFlag()) <= 16)
       {
         //chroma refine
+        //对最好的几个使用色度细化 把色度失真加入
         bestCandIdx = xIBCSearchMVChromaRefine(pu, roiWidth, roiHeight, cuPelX, cuPelY, sadBestCand, cMVCand);
 
         bestX = cMVCand[bestCandIdx].getHor();
@@ -1277,7 +1281,7 @@ void InterSearch::xIntraPatternSearch(PredictionUnit& pu, IntTZSearchStruct&  cS
         goto end;
       }
 
-
+      //y步长为2 奇数点 x步长为2
       for (int y = (std::max(srchRngVerTop, -cuPelY) + 1); y <= srchRngVerBottom; y += 2)
       {
         if ((y == 0) || ((int)(cuPelY + y + roiHeight) >= picHeight))
@@ -1346,7 +1350,7 @@ void InterSearch::xIntraPatternSearch(PredictionUnit& pu, IntTZSearchStruct&  cS
 
       tempSadBest = sadBestCand[0];
 
-
+      //y奇数点 x奇数点
       for (int y = (std::max(srchRngVerTop, -cuPelY) + 1); y <= srchRngVerBottom; y += 2)
       {
         if ((y == 0) || ((int)(cuPelY + y + roiHeight) >= picHeight))
@@ -1398,7 +1402,7 @@ void InterSearch::xIntraPatternSearch(PredictionUnit& pu, IntTZSearchStruct&  cS
       }
     }
   }
-
+  //保存最佳
   bestCandIdx = xIBCSearchMVChromaRefine(pu, roiWidth, roiHeight, cuPelX, cuPelY, sadBestCand, cMVCand);
 
   bestX = cMVCand[bestCandIdx].getHor();
@@ -1661,15 +1665,16 @@ bool InterSearch::predIBCSearch(CodingUnit& cu, Partitioner& partitioner, const 
 #endif
     //////////////////////////////////////////////////////////
     /// ibc search
-    pu.cu->imv = 2;//2表示整数精度
+    pu.cu->imv = 2;//2表示4像素精度 1表示整数
     AMVPInfo amvpInfo4Pel;
-    PU::fillIBCMvpCand(pu, amvpInfo4Pel);//AMVP获取
+    PU::fillIBCMvpCand(pu, amvpInfo4Pel);//IBC AMVP获取
 
-    pu.cu->imv = 0;// (Int)cu.cs->sps->getUseIMV(); // set as IMV=0 initially
+    pu.cu->imv = 0;// (Int)cu.cs->sps->getUseIMV(); // set as IMV=0 initially 0表示小数
     Mv    cMv, cMvPred[2];
     AMVPInfo amvpInfo;
     PU::fillIBCMvpCand(pu, amvpInfo);
     // store in full pel accuracy, shift before use in search
+    //把Internal精度转换为Int 
     cMvPred[0] = amvpInfo.mvCand[0];
     cMvPred[0].changePrecision(MV_PRECISION_INTERNAL, MV_PRECISION_INT);
     cMvPred[1] = amvpInfo.mvCand[1];
@@ -1684,12 +1689,12 @@ bool InterSearch::predIBCSearch(CodingUnit& cu, Partitioner& partitioner, const 
       iBvpNum = 1;
       cMvPred[1] = cMvPred[0];
     }
-    //IBC Hash搜索 
+    //IBC Hash搜索 这里获取BV
     if (m_pcEncCfg->getIBCHashSearch())
     {
       xxIBCHashSearch(pu, cMvPred, iBvpNum, cMv, bvpIdxBest, ibcHashMap);
     }
-
+    //如果Hash搜索失败或者不够好 那么IBC搜索
     if (cMv.getHor() == 0 && cMv.getVer() == 0)
     {
       // if hash search does not work or is not enabled
@@ -1706,7 +1711,7 @@ bool InterSearch::predIBCSearch(CodingUnit& cu, Partitioner& partitioner, const 
     unsigned int bitsBVPBest, bitsBVPTemp;
     bitsBVPBest = MAX_INT;
     m_pcRdCost->setCostScale(0);
-
+    //使用BV predictor进行AMVP
     for (int bvpIdxTemp = 0; bvpIdxTemp<iBvpNum; bvpIdxTemp++)
     {
       m_pcRdCost->setPredictor(cMvPred[bvpIdxTemp]);
@@ -1730,7 +1735,7 @@ bool InterSearch::predIBCSearch(CodingUnit& cu, Partitioner& partitioner, const 
 
       unsigned int bitsBVPQP = MAX_UINT;
 
-
+      //检查使用四像素BV
       Mv mvPredQuadPel;
       if ((cMv.getHor() % 4 == 0) && (cMv.getVer() % 4 == 0) && (pu.cs->sps->getAMVREnabledFlag()))
       {
@@ -1755,13 +1760,14 @@ bool InterSearch::predIBCSearch(CodingUnit& cu, Partitioner& partitioner, const 
         }
       }
     }
-
+    //imv 1整像素精度 0小数（其实就是internal 1/16） 2 四分像素精度
     pu.bv = cMv; // bv is always at integer accuracy
-    cMv.changePrecision(MV_PRECISION_INT, MV_PRECISION_INTERNAL);
+    cMv.changePrecision(MV_PRECISION_INT, MV_PRECISION_INTERNAL);//把整像素精度的BV转化为1/16像素精度
     pu.mv[REF_PIC_LIST_0] = cMv; // store in fractional pel accuracy
 
     pu.mvpIdx[REF_PIC_LIST_0] = bvpIdxBest;
-
+    //如果是internal并且MVD不为0 使用amvpInfo4Pel
+    //否则amvpInfo
     if(pu.cu->imv == 2 && cMv != amvpInfo4Pel.mvCand[bvpIdxBest])
     {
       pu.mvd[REF_PIC_LIST_0] = cMv - amvpInfo4Pel.mvCand[bvpIdxBest];
@@ -1777,6 +1783,7 @@ bool InterSearch::predIBCSearch(CodingUnit& cu, Partitioner& partitioner, const 
     }
     if (pu.cu->imv == 2)
     {
+      //如果是4像素精度，那么保存的%16一定为0
       assert((cMv.getHor() % 16 == 0) && (cMv.getVer() % 16 == 0));
     }
     if (cu.cs->sps->getAMVREnabledFlag())
@@ -1801,6 +1808,7 @@ void InterSearch::xxIBCHashSearch(PredictionUnit& pu, Mv* mvPred, int numMvPred,
   const bool isEncodeGdrClean = cs.sps->getGDREnabledFlag() && cs.pcv->isEncoder && ((cs.picHeader->getInGdrInterval() && cs.isClean(pu.Y().topRight(), CHANNEL_TYPE_LUMA)) || (cs.picHeader->getNumVerVirtualBoundaries() == 0));
 #endif
   std::vector<Position> candPos;
+  //这里的hash表直接按照像素生成
   if (ibcHashMap.ibcHashMatch(pu.Y(), candPos, *pu.cs, m_pcEncCfg->getIBCHashSearchMaxCand(), m_pcEncCfg->getIBCHashSearchRange4SmallBlk()))
   {
     unsigned int minCost = MAX_UINT;
@@ -1821,7 +1829,7 @@ void InterSearch::xxIBCHashSearch(PredictionUnit& pu, Mv* mvPred, int numMvPred,
         Position tmp = *pos - pu.Y().pos();
         Mv candMv;
         candMv.set(tmp.x, tmp.y);
-
+        //检查BV是否合法
         if (!searchBv(pu, cuPelX, cuPelY, roiWidth, roiHeight, picWidth, picHeight, candMv.getHor(), candMv.getVer(), lcuWidth))
         {
           continue;
@@ -1846,7 +1854,7 @@ void InterSearch::xxIBCHashSearch(PredictionUnit& pu, Mv* mvPred, int numMvPred,
             idxMvPred = n;
             minCost = cost;
           }
-
+          //使用1/4像素精度
           int costQuadPel = MAX_UINT;
           if ((candMv.getHor() % 4 == 0) && (candMv.getVer() % 4 == 0) && (pu.cs->sps->getAMVREnabledFlag()))
           {
@@ -2351,8 +2359,8 @@ bool InterSearch::xHashInterEstimation(PredictionUnit& pu, RefPicList& bestRefPi
   int xPos = pu.cu->lumaPos().x;
   int yPos = pu.cu->lumaPos().y;
 
-  uint32_t hashValue1;
-  uint32_t hashValue2;
+  uint32_t hashValue1;//用于验证
+  uint32_t hashValue2;//用于匹配的Hash
   Distortion bestCost = UINT64_MAX;
   //获取当前块的Hash值
   if (!TComHash::getBlockHashValue((pu.cs->picture->getOrigBuf()), width, height, xPos, yPos, pu.cu->slice->getSPS()->getBitDepths(), hashValue1, hashValue2))
@@ -3274,7 +3282,8 @@ void InterSearch::predInterSearch(CodingUnit& cu, Partitioner& partitioner)
 #endif
 
         uint32_t uiMotBits[2];
-        //如果不令RPL1的MVD为0，这里只需要计算下双向预测花费的比特数。
+        //如果不令RPL1的MVD为0，这里需要计算下双向预测花费的比特数。
+
         //如果令RPL1的MVD为0，不光要计算花费的比特数，还需要获取参考帧列表为1时，
         //AMVP的MVP直接当MV来单向预测时，最优情况下的预测值
         if(cs.picHeader->getMvdL1ZeroFlag())
@@ -3318,6 +3327,7 @@ void InterSearch::predInterSearch(CodingUnit& cu, Partitioner& partitioner)
             }
           }
           PelUnitBuf predBufTmp = m_tmpPredStorage[REF_PIC_LIST_1].getBuf( UnitAreaRelative(cu, pu) );
+          //计算MVD为0的情况下 
           motionCompensation( pu, predBufTmp, REF_PIC_LIST_1 );
 
           uiMotBits[0] = uiBits[0] - uiMbBits[0];
@@ -3356,6 +3366,8 @@ void InterSearch::predInterSearch(CodingUnit& cu, Partitioner& partitioner)
         if( doBiPred )
         {
           // 4-times iteration (default)
+
+          //固定一边 另一边
           int iNumIter = 4;
           //RA配置下 默认开启 所以只做一次
           // fast encoder setting: only one iteration
@@ -3372,6 +3384,7 @@ void InterSearch::predInterSearch(CodingUnit& cu, Partitioner& partitioner)
             //由于双向预测是固定一侧的预测值，再对另一侧进行运动搜索
             //iRefList表示要对哪一侧的RPL进行运动搜索。这里可以看到哪一侧的RDcost更低，就固定不动
             //开启BCW时，则是哪一侧的权重更高，就固定不动。
+            //默认情况开启快速算法 只做一次 那么iRefList初始为=0；
             int iRefList = iIter % 2;
 
             if (m_pcEncCfg->getFastInterSearchMode() == FASTINTERSEARCH_MODE1
@@ -3684,10 +3697,10 @@ void InterSearch::predInterSearch(CodingUnit& cu, Partitioner& partitioner)
           int curRefList = REF_PIC_LIST_0;
           int tarRefList = 1 - curRefList;
           RefPicList eCurRefList = (curRefList ? REF_PIC_LIST_1 : REF_PIC_LIST_0);
-          int refIdxCur = cs.slice->getSymRefIdx( curRefList );
+          int refIdxCur = cs.slice->getSymRefIdx( curRefList );//查表得到使用参考列表的哪一帧使用sym
           int refIdxTar = cs.slice->getSymRefIdx( tarRefList );
           CHECK (refIdxCur==-1 || refIdxTar==-1, "Uninitialized reference index not allowed");
-
+          //去AMVP冗余
           if ( aacAMVPInfo[curRefList][refIdxCur].mvCand[0] == aacAMVPInfo[curRefList][refIdxCur].mvCand[1] )
           {
             aacAMVPInfo[curRefList][refIdxCur].numCand = 1;
@@ -3714,6 +3727,7 @@ void InterSearch::predInterSearch(CodingUnit& cu, Partitioner& partitioner)
           bool costOk = init_value;
           bool bestCostOk = init_value;
 #endif
+          //组合两个方向的MV
           for ( int i = 0; i < aacAMVPInfo[curRefList][refIdxCur].numCand; i++ )
           {
             for ( int j = 0; j < aacAMVPInfo[tarRefList][refIdxTar].numCand; j++ )
@@ -3766,6 +3780,7 @@ void InterSearch::predInterSearch(CodingUnit& cu, Partitioner& partitioner)
               }
             }
           }
+          //最终使用的两个MV
           cCurMvField.mv = cMvPredSym[curRefList];
           cTarMvField.mv = cMvPredSym[tarRefList];
 
@@ -3779,15 +3794,17 @@ void InterSearch::predInterSearch(CodingUnit& cu, Partitioner& partitioner)
           m_pcRdCost->setCostScale(0);
           Mv pred = cMvPredSym[curRefList];
           pred.changeTransPrecInternal2Amvr(pu.cu->imv);
-          m_pcRdCost->setPredictor(pred);
+          m_pcRdCost->setPredictor(pred);//用基准MV去预测Target MV
           Mv mv = cCurMvField.mv;
           mv.changeTransPrecInternal2Amvr(pu.cu->imv);
           uint32_t bits = m_pcRdCost->getBitsOfVectorWithPredictor(mv.hor, mv.ver, 0);
+          //加上两个MVP的index比特
           bits += m_auiMVPIdxCost[mvpIdxSym[curRefList]][AMVP_MAX_NUM_CANDS];
           bits += m_auiMVPIdxCost[mvpIdxSym[tarRefList]][AMVP_MAX_NUM_CANDS];
           costStart += m_pcRdCost->getCost(bits);
 
           std::vector<Mv> symmvdCands;
+          //SMVD生成匿名函数
           auto smmvdCandsGen = [&](Mv mvCand, bool mvPrecAdj)
           {
             if (mvPrecAdj && pu.cu->imv)
@@ -3796,6 +3813,7 @@ void InterSearch::predInterSearch(CodingUnit& cu, Partitioner& partitioner)
             }
 
             bool toAddMvCand = true;
+            //检测是否存在重复
             for (std::vector<Mv>::iterator pos = symmvdCands.begin(); pos != symmvdCands.end(); pos++)
             {
               if (*pos == mvCand)
@@ -3804,7 +3822,7 @@ void InterSearch::predInterSearch(CodingUnit& cu, Partitioner& partitioner)
                 break;
               }
             }
-
+            //不重复就加入
             if (toAddMvCand)
             {
               symmvdCands.push_back(mvCand);
@@ -3826,7 +3844,8 @@ void InterSearch::predInterSearch(CodingUnit& cu, Partitioner& partitioner)
             BlkUniMvInfo* curMvInfo = m_uniMvList + ((m_uniMvListIdx - 1 - i + m_uniMvListMaxSize) % (m_uniMvListMaxSize));
             smmvdCandsGen(curMvInfo->uniMvs[curRefList][refIdxCur], true);
           }
-
+          //以上是构建smmvd列表
+          //遍历smmvd列表
           for (auto mvStart : symmvdCands)
           {
             bool checked = false; //if it has been checkin in the mvPred.
@@ -3899,7 +3918,7 @@ void InterSearch::predInterSearch(CodingUnit& cu, Partitioner& partitioner)
 #endif
             }
           }
-          Mv startPtMv = cCurMvField.mv;
+          Mv startPtMv = cCurMvField.mv;//以上仅仅是为了得到对称MVD搜索的起始位置
 
           Distortion mvpCost = m_pcRdCost->getCost(m_auiMVPIdxCost[mvpIdxSym[curRefList]][AMVP_MAX_NUM_CANDS] + m_auiMVPIdxCost[mvpIdxSym[tarRefList]][AMVP_MAX_NUM_CANDS]);
           symCost = costStart - mvpCost;
@@ -4009,7 +4028,7 @@ void InterSearch::predInterSearch(CodingUnit& cu, Partitioner& partitioner)
             }
 #endif
           }
-        }
+        } // SMVD
       } // if (B_SLICE)
 
 
@@ -4262,7 +4281,7 @@ void InterSearch::predInterSearch(CodingUnit& cu, Partitioner& partitioner)
       xPredAffineInterSearch(pu, origBuf, puIdx, uiLastModeTemp, uiAffineCost, cMvHevcTemp, cMvHevcTempSolid, acMvAffine4Para, acMvAffine4ParaSolid, refIdx4Para, bcwIdx, enforceBcwPred,
         ((cu.slice->getSPS()->getUseBcw() == true) ? getWeightIdxBits(bcwIdx) : 0));
 #else
-      //仿射运动估计
+      //仿射运动估计 很复杂..
       xPredAffineInterSearch(pu, origBuf, puIdx, uiLastModeTemp, uiAffineCost, cMvHevcTemp, acMvAffine4Para, refIdx4Para, bcwIdx, enforceBcwPred,
         ((cu.slice->getSPS()->getUseBcw() == true) ? getWeightIdxBits(bcwIdx) : 0));
 #endif
@@ -4472,7 +4491,7 @@ void InterSearch::predInterSearch(CodingUnit& cu, Partitioner& partitioner)
             }
 #endif
           }
-        }
+        }//六参数
 
         uiAffineCost += m_pcRdCost->getCost( 1 ); // add one bit for affine_type
       }
@@ -5008,7 +5027,7 @@ void InterSearch::xMotionEstimation(PredictionUnit& pu, PelUnitBuf& origBuf, Ref
     if( bValid )
     {
       bQTBTMV2 = true;
-      cIntMv.changePrecision( MV_PRECISION_INT, MV_PRECISION_INTERNAL);
+      cIntMv.changePrecision( MV_PRECISION_INT, MV_PRECISION_INTERNAL);//把整数精度转换为Internal
     }
   }
 
@@ -5039,8 +5058,8 @@ void InterSearch::xMotionEstimation(PredictionUnit& pu, PelUnitBuf& origBuf, Ref
     m_cDistParam.cur.buf = cStruct.piRefY + (cTmpMv.ver * cStruct.iRefStride) + cTmpMv.hor;
     Distortion uiBestSad = m_cDistParam.distFunc(m_cDistParam);
     uiBestSad += m_pcRdCost->getCostOfVectorWithPredictor(cTmpMv.hor, cTmpMv.ver, cStruct.imvShift);
-    //类似去重？
-
+    
+    //选出最佳的搜索起始点
     for (int i = 0; i < m_uniMvListSize; i++)
     {
       BlkUniMvInfo* curMvInfo = m_uniMvList + ((m_uniMvListIdx - 1 - i + m_uniMvListMaxSize) % (m_uniMvListMaxSize));
@@ -5151,6 +5170,7 @@ void InterSearch::xMotionEstimation(PredictionUnit& pu, PelUnitBuf& origBuf, Ref
 #if GDR_ENABLED
     xPatternSearchIntRefine(pu, cStruct, rcMv, rcMvPred, riMVPIdx, ruiBits, ruiCost, amvpInfo, fWeight, eRefPicList, iRefIdxPred, rbCleanCandExist);
 #else
+    //在周围八个点再细化一次
     xPatternSearchIntRefine( pu, cStruct, rcMv, rcMvPred, riMVPIdx, ruiBits, ruiCost, amvpInfo, fWeight);
 #endif
   }
@@ -6118,7 +6138,7 @@ void InterSearch::xPatternSearchFracDIF(
     Mv baseRefMv(0, 0);
     rcMvHalf.setZero();
     m_pcRdCost->setCostScale(0);
-    xExtDIFUpSamplingH(&cPatternRoi, cStruct.useAltHpelIf);
+    xExtDIFUpSamplingH(&cPatternRoi, cStruct.useAltHpelIf);//插值
     rcMvQter = rcMvInt;   rcMvQter <<= 2;    // for mv-cost
 #if GDR_ENABLED
     ruiCost = xPatternRefinement(pu, eRefPicList, iRefIdx, cStruct.pcPatternKey, baseRefMv, 1, rcMvQter, !pu.cs->slice->getDisableSATDForRD(), rbCleanCandExist);
@@ -6146,6 +6166,7 @@ void InterSearch::xPatternSearchFracDIF(
 #if GDR_ENABLED
   ruiCost = xPatternRefinement(pu, eRefPicList, iRefIdx, cStruct.pcPatternKey, baseRefMv, 2, rcMvHalf, (!pu.cs->slice->getDisableSATDForRD()), rbCleanCandExist);
 #else
+  //第三个参数为2 说明使用half
   ruiCost = xPatternRefinement(cStruct.pcPatternKey, baseRefMv, 2, rcMvHalf, (!pu.cs->slice->getDisableSATDForRD()));
 #endif
 
@@ -6153,7 +6174,7 @@ void InterSearch::xPatternSearchFracDIF(
   if (cStruct.imvShift == IMV_OFF)
   {
     m_pcRdCost->setCostScale(0);
-    xExtDIFUpSamplingQ(&cPatternRoi, rcMvHalf);
+    xExtDIFUpSamplingQ(&cPatternRoi, rcMvHalf);//插值
     baseRefMv = rcMvHalf;
     baseRefMv <<= 1;
 
@@ -6272,12 +6293,13 @@ Distortion InterSearch::xSymmeticRefineMvSearch( PredictionUnit &pu, PelUnitBuf&
   {
     THROW( "Invalid search pattern" );
   }
-
+  //进行uiMaxSearchRounds轮搜索
   int nBestDirect;
   for ( uint32_t uiRound = 0; uiRound < uiMaxSearchRounds; uiRound++ )
   {
     nBestDirect = -1;
     MvField mvCurCenter = rCurMvField;
+    //使用不同的偏移
     for ( int nIdx = nDirectStart; nIdx <= nDirectEnd; nIdx++ )
     {
       int nDirect;
@@ -6429,10 +6451,10 @@ void InterSearch::xPredAffineInterSearch( PredictionUnit&       pu,
   Mv        cMvBi[2][3];
   Mv        cMvTemp[2][33][3];
 
-  int       iNumPredDir = slice.isInterP() ? 1 : 2;
+  int       iNumPredDir = slice.isInterP() ? 1 : 2;//方向
 
   int mvNum = 2;
-  mvNum = pu.cu->affineType ? 3 : 2;
+  mvNum = pu.cu->affineType ? 3 : 2;//3控制点6参数 or 2控制点4参数
 
   // Mvp
   Mv        cMvPred[2][33][3];
@@ -6570,7 +6592,7 @@ void InterSearch::xPredAffineInterSearch( PredictionUnit&       pu,
   int tryBipred = 0;
   WPScalingParam *wp0;
   WPScalingParam *wp1;
-  xGetBlkBits( slice.isInterP(), puIdx, lastMode, uiMbBits);
+  xGetBlkBits( slice.isInterP(), puIdx, lastMode, uiMbBits);//uiMbBits初始化为3/1 3 5
 
   pu.cu->affine = true;
   pu.mergeFlag = false;
@@ -6585,6 +6607,7 @@ void InterSearch::xPredAffineInterSearch( PredictionUnit&       pu,
   {
     RefPicList  eRefPicList = ( iRefList ? REF_PIC_LIST_1 : REF_PIC_LIST_0 );
     pu.interDir = ( iRefList ? 2 : 1 );
+    //遍历该方向所有参考帧
     for (int iRefIdxTemp = 0; iRefIdxTemp < slice.getNumRefIdx(eRefPicList); iRefIdxTemp++)
     {
       // Get RefIdx bits
@@ -6598,7 +6621,7 @@ void InterSearch::xPredAffineInterSearch( PredictionUnit&       pu,
         }
       }
 
-      // Do Affine AMVP
+      // Do Affine AMVP 最后得到了最佳的仿射参数
       xEstimateAffineAMVP( pu, affiAMVPInfoTemp[eRefPicList], origBuf, eRefPicList, iRefIdxTemp, cMvPred[iRefList][iRefIdxTemp], &biPDistTemp );
       if ( affineAmvrEnabled )
       {
@@ -6626,7 +6649,7 @@ void InterSearch::xPredAffineInterSearch( PredictionUnit&       pu,
         xCopyAffineAMVPInfo( affiAMVPInfoTemp[eRefPicList], aacAffineAMVPInfo[iRefList][iRefIdxTemp] );
         continue;
       }
-
+      //使用普通运动的最佳尝试仿射 也就是平移运动
       // set hevc ME result as start search position when it is best than mvp
       for ( int i=0; i<3; i++ )
       {
@@ -6725,6 +6748,7 @@ void InterSearch::xPredAffineInterSearch( PredictionUnit&       pu,
         && (!pu.cu->cs->sps->getUseBcw() || bcwIdx == BCW_DEFAULT)
         )
       {
+        //使用hevcMV和CMVP
         int shift = MAX_CU_DEPTH;
         for (int i = 0; i < m_affMVListSize; i++)
         {
@@ -6751,7 +6775,7 @@ void InterSearch::xPredAffineInterSearch( PredictionUnit&       pu,
           {
             continue;
           }
-
+          //下面的处理再得到一组CMVP
           Mv mvTmp[3], *nbMv = mvInfo->affMVs[iRefList][iRefIdxTemp];
 #if GDR_ENABLED
           bool mvTmpSolid[3];
@@ -6827,7 +6851,7 @@ void InterSearch::xPredAffineInterSearch( PredictionUnit&       pu,
 #endif
           }
         }
-      }
+      }//四参数结束
       if ( pu.cu->affineType == AFFINEMODEL_6PARAM )
       {
         Mv mvFour[3];
@@ -6892,7 +6916,7 @@ void InterSearch::xPredAffineInterSearch( PredictionUnit&       pu,
           uiCandCost = uiCandCostInherit;
           for ( int i = 0; i < 3; i++ )
           {
-            mvHevc[i] = mvFour[i];
+            mvHevc[i] = mvFour[i];//最优CPMVP存入mvHevc
 #if GDR_ENABLED
             if (isEncodeGdrClean)
             {
@@ -6902,7 +6926,7 @@ void InterSearch::xPredAffineInterSearch( PredictionUnit&       pu,
 #endif
           }
         }
-      }
+      }//六参数结束
 
 
 #if GDR_ENABLED
@@ -7017,7 +7041,7 @@ void InterSearch::xPredAffineInterSearch( PredictionUnit&       pu,
           xAffineMotionEstimation( pu, origBuf, eRefPicList, cMvPred[iRefList][iRefIdxTemp], iRefIdxTemp, cMvTemp[iRefList][iRefIdxTemp], uiBitsTemp, uiCostTemp
                                    , aaiMvpIdx[iRefList][iRefIdxTemp], affiAMVPInfoTemp[eRefPicList]
 #endif
-          );
+          );//上面通过一系列处理 得到了CMVP作为起始点 进行ME
 
 #if GDR_ENABLED
           if (isEncodeGdrClean)
@@ -8900,7 +8924,7 @@ void InterSearch::xEstimateAffineAMVP( PredictionUnit&  pu,
                                        Mv               acMvPred[3],
                                        Distortion*      puiDistBiP )
 {
-  Mv         bestMvLT, bestMvRT, bestMvLB;
+  Mv         bestMvLT, bestMvRT, bestMvLB;//三个控制点最佳MV
   int        iBestIdx = 0;
   Distortion uiBestCost = std::numeric_limits<Distortion>::max();
 
@@ -8916,7 +8940,7 @@ void InterSearch::xEstimateAffineAMVP( PredictionUnit&  pu,
 
   PelUnitBuf predBuf = m_tmpStorageLCU.getBuf( UnitAreaRelative(*pu.cu, pu) );
 
-  // initialize Mvp index & Mvp
+  // initialize Mvp index & Mvp 从仿射AMVP候选列表中选择出最优的候选项
   iBestIdx = 0;
   for( int i = 0 ; i < affineAMVPInfo.numCand; i++ )
   {

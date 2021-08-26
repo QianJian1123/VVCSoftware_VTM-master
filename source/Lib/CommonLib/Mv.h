@@ -54,7 +54,7 @@ enum MvPrecision
   MV_PRECISION_HALF     = 3,      // 1/2-pel
   MV_PRECISION_QUARTER  = 4,      // 1/4-pel (the precision of regular MV difference signaling), shift 4 bits from 4-pel
   MV_PRECISION_SIXTEENTH = 6,     // 1/16-pel (the precision of internal MV), shift 6 bits from 4-pel
-  MV_PRECISION_INTERNAL = 2 + MV_FRACTIONAL_BITS_INTERNAL,//2+4？具体含义？
+  MV_PRECISION_INTERNAL = 2 + MV_FRACTIONAL_BITS_INTERNAL,//2+4？具体含义？内部MV精度？
 
 };
 
@@ -191,7 +191,7 @@ public:
     else
     {
       const int rightShift = -shift;
-      const int nOffset = 1 << (rightShift - 1);
+      const int nOffset = 1 << (rightShift - 1);//用于四舍五入
       hor = hor >= 0 ? (hor + nOffset - 1) >> rightShift : (hor + nOffset) >> rightShift;
       ver = ver >= 0 ? (ver + nOffset - 1) >> rightShift : (ver + nOffset) >> rightShift;
     }
