@@ -967,7 +967,7 @@ CodingUnit* CodingStructure::getLumaCU( const Position &pos )
 
 CodingUnit* CodingStructure::getCU( const Position &pos, const ChannelType effChType )
 {
-  const CompArea &_blk = area.blocks[effChType];
+  const CompArea &_blk = area.blocks[effChType];//当前cs所处理的区域
 
   if( !_blk.contains( pos ) || (treeType == TREE_C && effChType == CHANNEL_TYPE_LUMA) )
   {

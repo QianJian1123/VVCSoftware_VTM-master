@@ -882,12 +882,12 @@ void EncAdaptiveLoopFilter::ALFProcess(CodingStructure& cs, const double *lambda
 
    // IRAP AU is assumed
   if( !layerIdx && ( cs.slice->getPendingRasInit() || cs.slice->isIDRorBLA() ) )
-  {
+  {//初始化SLICE head ALF可以使用的APS
     memset(cs.slice->getAlfAPSs(), 0, sizeof(*cs.slice->getAlfAPSs())*ALF_CTB_MAX_NUM_APS);
     m_apsIdStart = ALF_CTB_MAX_NUM_APS;
 
     m_apsMap->clearActive();
-    for (int i = 0; i < ALF_CTB_MAX_NUM_APS; i++)
+    for (int i = 0; i < ALF_CTB_MAX_NUM_APS; i++)//对每一个APS进行操作
     {
       APS* alfAPS = m_apsMap->getPS((i << NUM_APS_TYPE_LEN) + ALF_APS);
       m_apsMap->clearChangedFlag((i << NUM_APS_TYPE_LEN) + ALF_APS);
@@ -899,7 +899,7 @@ void EncAdaptiveLoopFilter::ALFProcess(CodingStructure& cs, const double *lambda
       }
     }
   }
-  AlfParam alfParam;
+  AlfParam alfParam; //一个APS中的滤波器，有25组滤波器
   alfParam.reset();
   const TempCtx  ctxStart(m_CtxCache, AlfCtx(m_CABACEstimator->getCtx()));
 

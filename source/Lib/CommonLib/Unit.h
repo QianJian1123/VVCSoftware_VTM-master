@@ -287,8 +287,8 @@ class  CodingStructure;
 
 struct CodingUnit : public UnitArea
 {
-  CodingStructure *cs;
-  Slice *slice;
+  CodingStructure *cs; //所属CS
+  Slice *slice;//所属SLICE
   ChannelType    chType;
 
   PredMode       predMode;
@@ -300,19 +300,19 @@ struct CodingUnit : public UnitArea
   uint8_t          mtDepth; // the actual number of splits after switching to mtt (equals btDepth if only binary splits are allowed)
   int8_t          chromaQpAdj;
   int8_t          qp;
-  SplitSeries    splitSeries;
+  SplitSeries    splitSeries;//64位长整数，记录ctu划分树划分到cu时的各个depth的划分模式
   TreeType       treeType;
   ModeType       modeType;
   ModeTypeSeries modeTypeSeries;
   bool           skip;
-  bool           mmvdSkip;
-  bool           affine;
-  int            affineType;
+  bool           mmvdSkip;//mmvd模式flag
+  bool           affine;//affine模式flag
+  int            affineType;//affine模式类型，4/6参数
   bool           colorTransform;
-  bool           geoFlag;
+  bool           geoFlag;//几何划分标志
   int            bdpcmMode;
   int            bdpcmModeChroma;
-  uint8_t          imv;
+  uint8_t          imv;//整数mv
   bool           rootCbf;
   uint8_t        sbtInfo;
   uint32_t           tileIdx;
@@ -342,11 +342,11 @@ struct CodingUnit : public UnitArea
 
   void initData();
 
-  unsigned    idx;
+  unsigned    idx;//cu存储在cs中的cus数组中的idx
   CodingUnit *next;
 
-  PredictionUnit *firstPU;
-  PredictionUnit *lastPU;
+  PredictionUnit *firstPU;   // cu会记录它的pu和tu
+  PredictionUnit *lastPU;//cu的pu和tu是cs.pus和cs.tus的一段
 
   TransformUnit *firstTU;
   TransformUnit *lastTU;
@@ -368,28 +368,28 @@ struct CodingUnit : public UnitArea
 // prediction unit
 // ---------------------------------------------------------------------------
 
-struct IntraPredictionData
+struct IntraPredictionData //帧内预测数据
 {
-  uint32_t  intraDir[MAX_NUM_CHANNEL_TYPE];
+  uint32_t  intraDir[MAX_NUM_CHANNEL_TYPE];//帧内预测亮度和色度模式
   bool      mipTransposedFlag;
-  int       multiRefIdx;
+  int       multiRefIdx;//帧内MRL模式的multiRefIdx
 };
 
-struct InterPredictionData
+struct InterPredictionData //帧间预测数据
 {
-  bool      mergeFlag;
+  bool      mergeFlag;//是否merge
   bool      regularMergeFlag;
-  uint8_t     mergeIdx;
+  uint8_t     mergeIdx;//mergeidx
   uint8_t     geoSplitDir;
   uint8_t     geoMergeIdx0;
   uint8_t     geoMergeIdx1;
-  bool           mmvdMergeFlag;
-  uint32_t       mmvdMergeIdx;
-  uint8_t     interDir;
-  uint8_t     mvpIdx  [NUM_REF_PIC_LIST_01];
-  uint8_t     mvpNum  [NUM_REF_PIC_LIST_01];
-  Mv        mvd     [NUM_REF_PIC_LIST_01];
-  Mv        mv      [NUM_REF_PIC_LIST_01];
+  bool           mmvdMergeFlag;//mmvd模式flag
+  uint32_t       mmvdMergeIdx;//mmvd模式的mergeidx
+  uint8_t     interDir;//帧间预测方向：1-前向、2-后向、3-双向
+  uint8_t     mvpIdx  [NUM_REF_PIC_LIST_01];//mvp在AMVP列表中的idx
+  uint8_t     mvpNum  [NUM_REF_PIC_LIST_01];//AMVP列表中mvp数目
+  Mv        mvd     [NUM_REF_PIC_LIST_01];//mvd
+  Mv        mv      [NUM_REF_PIC_LIST_01];//mv=mvp+mvd
 #if GDR_ENABLED 
   bool      mvSolid[NUM_REF_PIC_LIST_01];
   bool      mvValid[NUM_REF_PIC_LIST_01];
@@ -397,19 +397,19 @@ struct InterPredictionData
   MvpType   mvpType[NUM_REF_PIC_LIST_01];
   Position  mvpPos[NUM_REF_PIC_LIST_01];
 #endif
-  int16_t     refIdx  [NUM_REF_PIC_LIST_01];
+  int16_t     refIdx  [NUM_REF_PIC_LIST_01];//参考帧
   MergeType mergeType;
   bool      mvRefine;
   Mv        mvdL0SubPu[MAX_NUM_SUBCU_DMVR];
-  Mv        mvdAffi [NUM_REF_PIC_LIST_01][3];
-  Mv        mvAffi[NUM_REF_PIC_LIST_01][3];
+  Mv        mvdAffi [NUM_REF_PIC_LIST_01][3];//Affine模式各控制点的mvd
+  Mv        mvAffi[NUM_REF_PIC_LIST_01][3];//Affine模式各控制点的mv
 #if GDR_ENABLED
   bool      mvAffiSolid[NUM_REF_PIC_LIST_01][3];
   bool      mvAffiValid[NUM_REF_PIC_LIST_01][3];
   MvpType   mvAffiType[NUM_REF_PIC_LIST_01][3];
   Position  mvAffiPos[NUM_REF_PIC_LIST_01][3];
 #endif
-  bool      ciipFlag;
+  bool      ciipFlag;//CIIP模式flag
 
   Mv        bv;                             // block vector for IBC
   Mv        bvd;                            // block vector difference for IBC
@@ -418,8 +418,8 @@ struct InterPredictionData
 
 struct PredictionUnit : public UnitArea, public IntraPredictionData, public InterPredictionData
 {
-  CodingUnit      *cu;
-  CodingStructure *cs;
+  CodingUnit      *cu;//pu所属的cu
+  CodingStructure *cs;//pu所属的cs
   ChannelType      chType;
 
   // constructors
@@ -434,9 +434,9 @@ struct PredictionUnit : public UnitArea, public IntraPredictionData, public Inte
   PredictionUnit& operator=(const PredictionUnit& other);
   PredictionUnit& operator=(const MotionInfo& mi);
 
-  unsigned        idx;
+  unsigned        idx;//pu存储在cs中的pus数组中的idx
 
-  PredictionUnit *next;
+  PredictionUnit *next;//cs.pus中指向下一个pu
 
   // for accessing motion information, which can have higher resolution than PUs (should always be used, when accessing neighboring motion information)
   const MotionInfo& getMotionInfo() const;
@@ -451,16 +451,16 @@ struct PredictionUnit : public UnitArea, public IntraPredictionData, public Inte
 
 struct TransformUnit : public UnitArea
 {
-  CodingUnit      *cu;
+  CodingUnit      *cu;//tu所属的cu
   CodingStructure *cs;
   ChannelType      chType;
   int              m_chromaResScaleInv;
 
-  uint8_t        depth;
+  uint8_t        depth;//tu如果进行划分时的深度
   uint8_t        mtsIdx     [ MAX_NUM_TBLOCKS ];
   bool           noResidual;
   uint8_t        jointCbCr;
-  uint8_t        cbf        [ MAX_NUM_TBLOCKS ];
+  uint8_t        cbf        [ MAX_NUM_TBLOCKS ];//tu是否已经经过变换量化
 
   TransformUnit() : chType( CH_L ) { }
   TransformUnit(const UnitArea& unit);

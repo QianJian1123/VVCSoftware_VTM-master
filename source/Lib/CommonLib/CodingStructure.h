@@ -74,14 +74,15 @@ class CodingStructure
 {
 public:
 
-  UnitArea         area;
+  UnitArea         area;  //CodingStructure的处理区域
 
-  Picture         *picture;
-  CodingStructure *parent;
-  CodingStructure *bestCS;
+  Picture         *picture;//CodingStructure所归属的picture
+  CodingStructure *parent;//compress递归迭代过程中，子cu递归的上一级的的划分块cu
+  CodingStructure *bestCS; //最优的划分结构
   Slice           *slice;
 
-  UnitScale        unitScale[MAX_NUM_COMPONENT];
+  UnitScale        unitScale[MAX_NUM_COMPONENT];//VTM处理亮度最小单元为4x4，色度2x2，将像素单位进行scale
+
 
   int         baseQP;
   int         prevQP[MAX_NUM_CHANNEL_TYPE];
@@ -94,7 +95,8 @@ public:
   APS *      lmcsAps;
   APS *      scalinglistAps;
   const VPS *vps;
-  const PreCalcValues* pcv;
+  const PreCalcValues* pcv;//存储CodingStructure相关的一些通用数据
+
 
   CodingStructure(CUCache&, PUCache&, TUCache&);
 

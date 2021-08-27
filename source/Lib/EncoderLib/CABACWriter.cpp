@@ -904,7 +904,11 @@ void CABACWriter::cu_pred_data( const CodingUnit& cu )
   if( CU::isIntra( cu ) )
   {
     if( cu.Y().valid() )
-    {
+    { /*
+      这里调用了两次bdpcm_mode()，第一次是解析语法元素intra_bdpcm_luma_flag和intra_bdpcm_luma_dir_flag，会在CU类里面存储属性bdpcmMode。bdpcmMode为0表示不开启BDPCM；
+      为1表示BDPCM预测方向是水平的；为2表示BDPCM预测方向是垂直的。第二次调用也类似，只不过是存在CU的属性bdpcmModeChroma中。
+      intra_luma_pred_modes():解析帧内有关亮度的语法元素信息intra_chroma_pred_modes():解析帧内有关色度的语法元素信息
+      */
       bdpcm_mode( cu, COMPONENT_Y );
     }
 
@@ -917,7 +921,7 @@ void CABACWriter::cu_pred_data( const CodingUnit& cu )
     return;
   }
   if (!cu.Y().valid()) // dual tree chroma CU
-  {
+  {//如果当前CU不存在亮度分量则结束此函数
     return;
   }
   for( auto &pu : CU::traversePUs( cu ) )
@@ -1086,9 +1090,10 @@ void CABACWriter::intra_luma_pred_modes( const CodingUnit& cu )
     mip_pred_modes(cu);
     return;
   }
-  extend_ref_line( cu );
+  extend_ref_line(cu);
+  //解析语法元素intra_luma_ref_idx
 
-  isp_mode( cu );
+  isp_mode( cu );//解析语法元素intra_subpartitions_mode_flag,intra_subpartitions_split_flag
 
   const int numMPMs   = NUM_MOST_PROBABLE_MODES;
   const int numBlocks = CU::getNumPUs( cu );
@@ -1176,7 +1181,7 @@ void CABACWriter::intra_luma_pred_modes( const CodingUnit& cu )
       }
       CHECK(ipred_mode >= 64, "Incorrect mode");
       xWriteTruncBinCode(ipred_mode,
-                         NUM_LUMA_MODE - NUM_MOST_PROBABLE_MODES);   // Remaining mode is truncated binary coded
+                         NUM_LUMA_MODE - NUM_MOST_PROBABLE_MODES);   // Remaining mode is truncated binary coded剩余模式截断二进制编码 
     }
 
     DTRACE( g_trace_ctx, D_SYNTAX, "intra_luma_pred_modes() idx=%d pos=(%d,%d) mode=%d\n", k, pu->lumaPos().x, pu->lumaPos().y, pu->intraDir[0] );
