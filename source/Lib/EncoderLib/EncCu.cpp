@@ -57,7 +57,26 @@
 
 //! \ingroup EncoderLib
 //! \{
-
+string u_EncTestModeType[] = 
+{
+ "HASH_INTER", "MERGE_SKIP", "INTER_ME", "AFFINE",
+                               "MERGE_GEO",
+                               "INTRA",
+                               "PALETTE",
+                               "QT",
+                               "BT_H",
+                               "BT_V",
+                               "TT_H",
+                               "TT_V",
+                               "DONT_SPLIT",   // dummy mode to collect the data from the unsplit coding
+#if REUSE_CU_RESULTS
+ "RECO_CACHED",
+#endif
+ "IMV_LIST",
+ "IBC",         // ibc mode
+ "IBC_MERGE",   // ibc merge mode
+ "INVALID"
+};
 // ====================================================================================================================
 EncCu::EncCu() : m_GeoModeTest
 {
@@ -716,8 +735,13 @@ void EncCu::xCompressCU( CodingStructure*& tempCS, CodingStructure*& bestCS, Par
     m_bestBcwIdx[0] = m_bestBcwIdx[1] = -1;
   }
   /*----------------这里开始测试各种模式------------------*/
+  int u_count = 0;
+  vector<EncTestModeType> u_bestdivision;
+  vector<double>          u_costlist;
   do
-  {
+  { 
+     u_count++;
+
     for (int i = compBegin; i < (compBegin + numComp); i++)
     {
       ComponentID comID = jointPLT ? (ComponentID)compBegin : ((i > 0) ? COMPONENT_Cb : COMPONENT_Y);
@@ -848,6 +872,8 @@ void EncCu::xCompressCU( CodingStructure*& tempCS, CodingStructure*& bestCS, Par
       {
         xCheckRDCostIntra(tempCS, bestCS, partitioner, currTestMode, false);
       }
+      u_bestdivision.push_back(currTestMode.type);
+      u_costlist.push_back(bestCS->cost);
     }
     else if (currTestMode.type == ETM_PALETTE)
     {//PLT
@@ -906,6 +932,8 @@ void EncCu::xCompressCU( CodingStructure*& tempCS, CodingStructure*& bestCS, Par
         }
 
         xCheckModeSplit( tempCS, bestCS, partitioner, currTestMode, modeTypeParent, skipInterPass );
+        u_bestdivision.push_back(currTestMode.type);
+        u_costlist.push_back(bestCS->cost);
         //recover cons modes
         tempCS->modeType = partitioner.modeType = modeTypeParent;
         tempCS->treeType = partitioner.treeType = treeTypeParent;
@@ -948,6 +976,21 @@ void EncCu::xCompressCU( CodingStructure*& tempCS, CodingStructure*& bestCS, Par
 
 
   //////////////////////////////////////////////////////////////////////////
+  //if (u_count > 1)  { 
+  if (bestCS->area.lwidth() == 64 || bestCS->area.lheight() == 64)
+  {
+    auto str = (partitioner.chType == CHANNEL_TYPE_LUMA) ? " Luma" : "Chroma";
+    cout << str << "(" << bestCS->area.lx() << "," << bestCS->area.ly()
+                                                          << ") " << bestCS->area.lwidth() << "x"
+         << bestCS->area.lheight()   <<" : count " << u_count;
+    for (int i = 0; i < u_costlist.size(); i++)
+    {
+      cout << " {" << u_costlist[i] << "," << u_EncTestModeType[u_bestdivision[i]] << "}";
+    }
+    cout << endl;
+  
+  }
+
   // Finishing CU
   if( tempCS->cost == MAX_DOUBLE && bestCS->cost == MAX_DOUBLE )
   {
@@ -990,7 +1033,7 @@ void EncCu::xCompressCU( CodingStructure*& tempCS, CodingStructure*& bestCS, Par
   {
     m_pcIntraSearch->saveCuAreaCostInSCIPU( Area( partitioner.currArea().lumaPos(), partitioner.currArea().lumaSize() ), bestCS->cost );
   }
-
+  // PLT 相关
   if (bestCS->cus.size() == 1) // no partition
   {
     CHECK(bestCS->cus[0]->tileIdx != bestCS->pps->getTileIdx(bestCS->area.lumaPos()), "Wrong tile index!");
@@ -1446,7 +1489,6 @@ void EncCu::xCheckModeSplit(CodingStructure *&tempCS, CodingStructure *&bestCS, 
       skipInterPass = true;
     }
   }
-
   // RD check for sub partitioned coding structure.
   xCheckBestMode( tempCS, bestCS, partitioner, encTestMode );
 
